@@ -2,10 +2,10 @@ import MetaTrader5 as mt5
 from time import sleep
 
 # === CONFIGURATION ===
-SYMBOL = "USOILm"
-TRAIL_DISTANCE = 1.5
+SYMBOL = "USDJPYm"
+TRAIL_DISTANCE = 4
   # in points
-CHECK_INTERVAL = 2    # seconds between updates
+CHECK_INTERVAL = 3    # seconds between updates
 
 # === INITIALIZE MT5 ===
 if not mt5.initialize():
