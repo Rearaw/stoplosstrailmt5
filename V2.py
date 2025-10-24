@@ -3,9 +3,9 @@ import time
 import logging
 
 # === CONFIGURATION ===
-TRAIL_DISTANCE = 3.0  # Fixed trailing distance in points (adjustable, 1-5 recommended)
-CHECK_INTERVAL = 1     # Seconds between updates
-MIN_PROFIT = 2.0      # Minimum profit in account currency to start trailing (0 to trail when positive)
+TRAIL_DISTANCE = 4.0  # Fixed trailing distance in points (adjustable, 1-5 recommended)
+CHECK_INTERVAL = 0.5     # Seconds between updates
+MIN_PROFIT = 11.0      # Minimum profit in account currency to start trailing (0 to trail when positive)
 USE_BREAK_EVEN = True # Only trail when profit in points >= TRAIL_DISTANCE
 LOGIN = None          # MT5 account login (set to your account number, e.g., 123456)
 PASSWORD = None       # MT5 account password (set to your password)
