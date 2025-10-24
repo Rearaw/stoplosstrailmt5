@@ -3,10 +3,11 @@ import time
 import logging
 
 # === CONFIGURATION ===
-TRAIL_DISTANCE = 4.0  # Fixed trailing distance in points (adjustable, 1-5 recommended)
-CHECK_INTERVAL = 0.5     # Seconds between updates
-MIN_PROFIT = 11.0      # Minimum profit in account currency to start trailing (0 to trail when positive)
+TRAIL_DISTANCE = 4.0  # Fixed trailing distance in points
+CHECK_INTERVAL = 0.1  # Seconds between updates
+MIN_PROFIT = 11.0     # Minimum profit in account currency to start trailing
 USE_BREAK_EVEN = True # Only trail when profit in points >= TRAIL_DISTANCE
+MIN_PRICE_MOVE = 4.0  # Minimum price move in points from last SL price to update SL
 LOGIN = None          # MT5 account login (set to your account number, e.g., 123456)
 PASSWORD = None       # MT5 account password (set to your password)
 SERVER = None         # MT5 server name (set to your broker's server, e.g., "Broker-Demo")
@@ -32,6 +33,8 @@ if not mt5.initialize(**init_kwargs):
 logger.info("Successfully connected to MT5")
 
 # === MAIN LOOP ===
+last_sl_price = {}  # Track the price at which the last SL was set per position ticket
+
 try:
     while True:
         positions = mt5.positions_get()
@@ -63,37 +66,53 @@ try:
                         logger.info(f"Skipping SL trail for {pos.type} position {ticket} ({symbol}): profit_points={profit_points:.2f} < TRAIL_DISTANCE={TRAIL_DISTANCE}")
                         continue
 
-                    if pos.type == 0:  # BUY
-                        new_sl = current_price - TRAIL_DISTANCE * point
-                        if pos.sl == 0 or new_sl > pos.sl:  # Allow setting SL or if new SL is higher
-                            request = {
-                                "action": mt5.TRADE_ACTION_SLTP,
-                                "symbol": symbol,
-                                "sl": round(new_sl, digits),
-                                "tp": pos.tp,
-                                "position": ticket,
-                            }
-                            result = mt5.order_send(request)
-                            if result.retcode == mt5.TRADE_RETCODE_DONE:
-                                logger.info(f"Successfully moved SL for BUY position {ticket} ({symbol}) to {new_sl:.{digits}f}")
-                            else:
-                                logger.error(f"Failed to move SL for BUY position {ticket} ({symbol}) to {new_sl:.{digits}f}, retcode={result.retcode}")
+                    # Check for significant price movement
+                    update_sl = False
+                    if ticket not in last_sl_price:  # First SL update
+                        update_sl = True
+                    else:
+                        last_price = last_sl_price[ticket]
+                        if pos.type == 0:  # BUY
+                            if current_price >= last_price + MIN_PRICE_MOVE * point:
+                                update_sl = True
+                        else:  # SELL
+                            if current_price <= last_price - MIN_PRICE_MOVE * point:
+                                update_sl = True
 
-                    elif pos.type == 1:  # SELL
-                        new_sl = current_price + TRAIL_DISTANCE * point
-                        if pos.sl == 0 or (pos.sl > 0 and new_sl < pos.sl):  # Allow setting SL or if new SL is lower
-                            request = {
-                                "action": mt5.TRADE_ACTION_SLTP,
-                                "symbol": symbol,
-                                "sl": round(new_sl, digits),
-                                "tp": pos.tp,
-                                "position": ticket,
-                            }
-                            result = mt5.order_send(request)
-                            if result.retcode == mt5.TRADE_RETCODE_DONE:
-                                logger.info(f"Successfully moved SL for SELL position {ticket} ({symbol}) to {new_sl:.{digits}f}")
-                            else:
-                                logger.error(f"Failed to move SL for SELL position {ticket} ({symbol}) to {new_sl:.{digits}f}, retcode={result.retcode}")
+                    if update_sl:
+                        if pos.type == 0:  # BUY
+                            new_sl = current_price - TRAIL_DISTANCE * point
+                            if pos.sl == 0 or new_sl > pos.sl:  # Allow setting SL or if new SL is higher
+                                request = {
+                                    "action": mt5.TRADE_ACTION_SLTP,
+                                    "symbol": symbol,
+                                    "sl": round(new_sl, digits),
+                                    "tp": pos.tp,
+                                    "position": ticket,
+                                }
+                                result = mt5.order_send(request)
+                                if result.retcode == mt5.TRADE_RETCODE_DONE:
+                                    logger.info(f"Successfully moved SL for BUY position {ticket} ({symbol}) to {new_sl:.{digits}f}")
+                                    last_sl_price[ticket] = current_price
+                                else:
+                                    logger.error(f"Failed to move SL for BUY position {ticket} ({symbol}) to {new_sl:.{digits}f}, retcode={result.retcode}")
+
+                        elif pos.type == 1:  # SELL
+                            new_sl = current_price + TRAIL_DISTANCE * point
+                            if pos.sl == 0 or (pos.sl > 0 and new_sl < pos.sl):  # Allow setting SL or if new SL is lower
+                                request = {
+                                    "action": mt5.TRADE_ACTION_SLTP,
+                                    "symbol": symbol,
+                                    "sl": round(new_sl, digits),
+                                    "tp": pos.tp,
+                                    "position": ticket,
+                                }
+                                result = mt5.order_send(request)
+                                if result.retcode == mt5.TRADE_RETCODE_DONE:
+                                    logger.info(f"Successfully moved SL for SELL position {ticket} ({symbol}) to {new_sl:.{digits}f}")
+                                    last_sl_price[ticket] = current_price
+                                else:
+                                    logger.error(f"Failed to move SL for SELL position {ticket} ({symbol}) to {new_sl:.{digits}f}, retcode={result.retcode}")
 
         time.sleep(CHECK_INTERVAL)
 except KeyboardInterrupt:
