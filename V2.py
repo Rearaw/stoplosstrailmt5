@@ -3,14 +3,31 @@ import time
 import logging
 
 # === CONFIGURATION ===
-TRAIL_DISTANCE = 4.0  # Fixed trailing distance in points
-CHECK_INTERVAL = 0.1  # Seconds between updates
-MIN_PROFIT = 11.0     # Minimum profit in account currency to start trailing
-USE_BREAK_EVEN = True # Only trail when profit in points >= TRAIL_DISTANCE
-MIN_PRICE_MOVE = 4.0  # Minimum price move in points from last SL price to update SL
+CHECK_INTERVAL=0.1# Seconds between updates
+USE_BREAK_EVEN=True
 LOGIN = None          # MT5 account login (set to your account number, e.g., 123456)
 PASSWORD = None       # MT5 account password (set to your password)
 SERVER = None         # MT5 server name (set to your broker's server, e.g., "Broker-Demo")
+volatility_map={"high":{"TRAIL_DISTANCE": 20, # Fixed trailing distance in points
+                     
+                    "MIN_PROFIT": 100,   # Minimum profit in account currency to start trailing
+                    "MIN_PRICE_MOVE":50.0,
+                    },
+            "medium":{"TRAIL_DISTANCE": 20, # Fixed trailing distance in points
+                    "MIN_PROFIT": 50,   # Minimum profit in account currency to start trailing
+                    "MIN_PRICE_MOVE":25.0,
+                    },
+            "low":{"TRAIL_DISTANCE": 15, # Fixed trailing distance in points
+                    "MIN_PROFIT": 20,   # Minimum profit in account currency to start trailing
+                    "MIN_PRICE_MOVE":10.0,
+                    }
+            }
+
+
+volatility_currency_pairs={
+    "high":["XAUUSDm"],
+    "medium":["GBPUSDm","EURUSDm","USDCHFm","USDCADm","AUDUSDm","NZDUSDm","GBPJPYm","EURJPYm","USDJPYm"],
+    "low":["EURCHFm","EURGBPm","AUDJPYm","CADJPYm","CHFJPYm","NZDJPYm"],}
 
 # === SETUP LOGGING ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,6 +49,7 @@ if not mt5.initialize(**init_kwargs):
 
 logger.info("Successfully connected to MT5")
 
+
 # === MAIN LOOP ===
 last_sl_price = {}  # Track the price at which the last SL was set per position ticket
 
@@ -44,13 +62,32 @@ try:
             continue
 
         if not positions:
-            logger.info("No open positions")
+            #logger.info("No open positions")
+            pass
         else:
             for pos in positions:
                 ticket = pos.ticket
                 symbol = pos.symbol
                 info = mt5.symbol_info(symbol)
                 tick = mt5.symbol_info_tick(symbol)
+                # Determine volatility settings for this symbol (fallback to 'medium' defaults)
+                level = None
+                for vol_level, symbols in volatility_currency_pairs.items():
+                    if symbol in symbols:
+                        level = vol_level
+                        break
+
+                if level:
+                    cfg = volatility_map.get(level, {})
+                    TRAIL_DISTANCE = cfg.get("TRAIL_DISTANCE", volatility_map["medium"]["TRAIL_DISTANCE"])
+                    MIN_PROFIT = cfg.get("MIN_PROFIT", volatility_map["medium"]["MIN_PROFIT"])
+                    MIN_PRICE_MOVE = cfg.get("MIN_PRICE_MOVE", volatility_map["medium"]["MIN_PRICE_MOVE"])
+                    logger.debug(f"Symbol {symbol} found in volatility level '{level}'; TRAIL_DISTANCE={TRAIL_DISTANCE}, MIN_PROFIT={MIN_PROFIT}, MIN_PRICE_MOVE={MIN_PRICE_MOVE}")
+                else:
+                    TRAIL_DISTANCE = volatility_map["medium"]["TRAIL_DISTANCE"]
+                    MIN_PROFIT = volatility_map["medium"]["MIN_PROFIT"]
+                    MIN_PRICE_MOVE = volatility_map["medium"]["MIN_PRICE_MOVE"]
+                    logger.debug(f"Symbol {symbol} not found in volatility mapping; using defaults TRAIL_DISTANCE={TRAIL_DISTANCE}, MIN_PROFIT={MIN_PROFIT}, MIN_PRICE_MOVE={MIN_PRICE_MOVE}")
                 if not info or not tick:
                     logger.error(f"Failed to get symbol info or tick for {symbol}")
                     continue
