@@ -8,7 +8,7 @@ USE_BREAK_EVEN=True
 LOGIN = None          # MT5 account login (set to your account number, e.g., 123456)
 PASSWORD = None       # MT5 account password (set to your password)
 SERVER = None         # MT5 server name (set to your broker's server, e.g., "Broker-Demo")
-volatility_map={"high":{"TRAIL_DISTANCE": 20, # Fixed trailing distance in points
+volatility_map={"high":{"TRAIL_DISTANCE": 50, # Fixed trailing distance in points
                      
                     "MIN_PROFIT": 100,   # Minimum profit in account currency to start trailing
                     "MIN_PRICE_MOVE":50.0,
@@ -96,7 +96,42 @@ try:
                 digits = info.digits
                 current_price = tick.bid if pos.type == 0 else tick.ask
                 profit_points = (current_price - pos.price_open) / point if pos.type == 0 else (pos.price_open - current_price) / point
+                # If no stop loss set, add one based on volatility level (in pips)
+                if pos.sl == 0:
+                    try:
+                        # Define initial SL pips for each volatility level
+                        initial_sl_pips = {
+                            "high": 388,    # 100 pips for high volatility
+                            "medium": 194,   # 50 pips for medium volatility
+                            "low": 30       # 30 pips for low volatility
+                        }
+                        
+                        # Get SL pips based on volatility level (default to medium)
+                        sl_pips = initial_sl_pips.get(level, initial_sl_pips["medium"])
+                        
+                        # Convert pips to points (1 pip = 10 points for most pairs)
+                        sl_points = sl_pips * 10
+                        
+                        if pos.type == 0:  # BUY
+                            initial_sl = pos.price_open - sl_points * point
+                        else:  # SELL
+                            initial_sl = pos.price_open + sl_points * point
 
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "symbol": symbol,
+                            "sl": round(initial_sl, digits),
+                            "tp": pos.tp,
+                            "position": ticket,
+                        }
+                        result = mt5.order_send(request)
+                        if result.retcode == mt5.TRADE_RETCODE_DONE:
+                            logger.info(f"Set initial SL ({sl_pips} pips) for {'BUY' if pos.type==0 else 'SELL'} position {ticket} ({symbol}) to {initial_sl:.{digits}f}")
+                            last_sl_price[ticket] = current_price
+                        else:
+                            logger.error(f"Failed to set initial SL for position {ticket} ({symbol}) to {initial_sl:.{digits}f}, retcode={result.retcode}")
+                    except Exception as e:
+                        logger.exception(f"Exception when setting initial SL for position {ticket} ({symbol}): {e}")
                 if pos.profit > MIN_PROFIT:
                     # Break-even protection: Skip trailing if profit_points < TRAIL_DISTANCE
                     if USE_BREAK_EVEN and profit_points < TRAIL_DISTANCE:
