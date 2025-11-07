@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QTextEdit, QCompleter
 from PySide6.QtCore import Qt, QTimer, QStringListModel
 from datetime import datetime
 from PySide6.QtWidgets import QSpinBox
+from return_codes import retcodedes
 
 class TradingApp(QMainWindow):
     def __init__(self):
@@ -154,10 +155,10 @@ class TradingApp(QMainWindow):
                     self.logger.append(f"[INFO] {ts} - order was Successfully placed")
                 else:
                     rc = getattr(result, "retcode", None)
-                    self.logger.append(f"[ERROR] {ts} - Failed to place, retcode={rc}")
+                    self.logger.append(f"[ERROR] {ts} - Failed to BUY, {retcodedes(rc)}")
         except Exception as e:
             ts = datetime.now().strftime("%H:%M:%S")
-            self.logger.append(f"[ERROR] {ts} - Error placing SELL orders: {e}")
+            self.logger.append(f"[ERROR] {ts} - Error placing BUY orders: {e}")
 
     def place_sell_orders(self):
         try:
@@ -180,7 +181,7 @@ class TradingApp(QMainWindow):
                     self.logger.append(f"[INFO] {ts} - order was Successfully placed")
                 else:
                     rc = getattr(result, "retcode", None)
-                    self.logger.append(f"[ERROR] {ts} - Failed to place, retcode={rc}")
+                    self.logger.append(f"[ERROR] {ts} - Failed to SELL, {retcodedes(rc)}")
         except Exception as e:
             ts = datetime.now().strftime("%H:%M:%S")
             self.logger.append(f"[ERROR] {ts} - Error placing SELL orders: {e}")
