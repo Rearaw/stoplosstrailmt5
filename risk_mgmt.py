@@ -101,7 +101,7 @@ try:
                     try:
                         # Define initial SL pips for each volatility level
                         initial_sl_pips = {
-                            "high": 388,    # ~500kes approximate 500kes
+                            "high": 778,    # ~500kes approximate 500kes
                             "medium": 60,   # ~500kes pips for medium volatility(jpys)
                             "low": 30       # 30 pips for low volatility
                         }

@@ -12,14 +12,16 @@ from return_codes import retcodedes
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-SYMBOLS: List[str] = ["USDJPYm","USOILm"]  # trade symbols here
+  #SYMBOLS: List[str] = ["USDJPYm","USOILm","XAUUSDm"] 
+SYMBOLS: List[str] = ["XAUUSDm"]  # trade symbols here
+AUTO_TRADE_SYBMOLS: List[str] = ["XAUUSDm"]  # symbols to auto trade
 TIMEFRAME = mt5.TIMEFRAME_M1
 # =============================SMMA CONFIG =============================
 SHORT_LEN = 9
 LONG_LEN = 45
 SQUEEZE_WINDOW = 3
 SQUEEZE_SIZE = 0.0005       # Adjust per symbol if needed (e.g., forex pips)
-CHECK_INTERVAL = 60         # Check every 60 seconds
+CHECK_INTERVAL = 1         # Check every 60 seconds
 LOG_FILE = "signals_log.csv"  # Optional: Log signals to file
 # =================================================================
 def place_buy_orders(lot_size: float, num_orders: int, symbol: str):
@@ -109,12 +111,12 @@ def get_active_trades(symbol: Optional[str] = None) -> Optional[pd.DataFrame]:
         for col in df.columns:
             if "time" in col and pd.api.types.is_integer_dtype(df[col].dtype):
                 try:
-                    df[col] = pd.to_datetime(df[col], unit="s")
+                    df[col] = pd.to_datetime(df[col], unit="s", errors="coerce")
                 except Exception:
                     # ignore conversion errors and leave original values
                     pass
 
-        logger.info(f"Retrieved {len(df)} active position(s){' for ' + symbol if symbol else ''}")
+         # logger.info(f"Retrieved {len(df)} active position(s){' for ' + symbol if symbol else ''}")
         return df
 
     except Exception as e:
@@ -151,6 +153,7 @@ def main():
                 )
                 result['symbol'] = symbol
                 results_list.append(result)
+                
 
             if not results_list:
                 time.sleep(CHECK_INTERVAL)
@@ -161,11 +164,22 @@ def main():
             # Display table of current signals
             display_cols = ['symbol','trend']
             print(results_df[display_cols].to_string(index=False, float_format='%.5f'))
+            
 
             # Check for new signals and alert
             for _, row in results_df.iterrows():
                 symbol = row['symbol']
                 trend = row['trend']
+                
+                if symbol in AUTO_TRADE_SYBMOLS:
+                    active_trades = get_active_trades(symbol=symbol)
+                    num_active = len(active_trades) if active_trades is not None else 0
+                    
+                    if num_active < 3:
+                        if trend in ["converging_bearish", "diverging_bullish"]:
+                            place_buy_orders(lot_size=0.01, num_orders=4, symbol=symbol)
+                        else:
+                            place_sell_orders(lot_size=0.01, num_orders=4, symbol=symbol)
 
 
             # Log to file
