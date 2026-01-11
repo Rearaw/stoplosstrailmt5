@@ -8,6 +8,7 @@ import os
 import logging
 from strategies.smma_mt5_strategy import smma_crossover_strategy
 from return_codes import retcodedes
+import pandas_ta as ta
 # === SETUP LOGGING ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ AUTO_TRADE_SYBMOLS: List[str] = ["XAUUSDm"]  # symbols to auto trade
 TIMEFRAME = mt5.TIMEFRAME_M1
 # =============================SMMA CONFIG =============================
 SHORT_LEN = 9
-LONG_LEN = 45
+LONG_LEN = 20
 SQUEEZE_WINDOW = 3
 SQUEEZE_SIZE = 0.0005       # Adjust per symbol if needed (e.g., forex pips)
 CHECK_INTERVAL = 1         # Check every 60 seconds
@@ -151,6 +152,7 @@ def main():
                 result = smma_crossover_strategy(
                     df, SHORT_LEN, LONG_LEN, SQUEEZE_WINDOW, SQUEEZE_SIZE
                 )
+                df['RSI']=ta.rsi(df.close, length=16)
                 result['symbol'] = symbol
                 results_list.append(result)
                 
@@ -164,6 +166,7 @@ def main():
             # Display table of current signals
             display_cols = ['symbol','trend']
             print(results_df[display_cols].to_string(index=False, float_format='%.5f'))
+            print(f'RSI Values:{df.RSI.iloc[-1]}')
             
 
             # Check for new signals and alert
@@ -176,7 +179,7 @@ def main():
                     num_active = len(active_trades) if active_trades is not None else 0
                     
                     if num_active < 3:
-                        if trend in ["converging_bearish", "diverging_bullish"]:
+                        if trend in ["converging_bearish", "diverging_bullish"] and df.RSI[-1]<45:
                             place_buy_orders(lot_size=0.01, num_orders=4, symbol=symbol)
                         else:
                             place_sell_orders(lot_size=0.01, num_orders=4, symbol=symbol)
