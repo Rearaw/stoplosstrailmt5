@@ -5,7 +5,7 @@ sys.path.append(os.path.abspath(os.path.expanduser("~/smart-money-concepts/")))
 import MetaTrader5 as mt5
 import pandas as pd
 import numpy as np
-import datetime
+from datetime import datetime
 import logging
 from typing import Literal, Optional, Dict, List
 from return_codes import retcodedes
@@ -16,7 +16,7 @@ import time
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 # ================= CONFIGURATION =================
-SYMBOL          = "XAUUSDm"#"USDJPYm"
+SYMBOLS          = ["XAUUSDm", "USDJPYm","XAGUSDm","USOILm","GBPUSDm","EURUSDm","USDCHFm","USDCADm","AUDUSDm","NZDUSDm","GBPJPYm","EURJPYm",]
 TIMEFRAME       = mt5.TIMEFRAME_M15
 LOT_SIZE        = 0.01
 SL_PIPS         = 25
@@ -47,39 +47,43 @@ def fetch_ohlc(symbol, timeframe, count=500) -> Optional[pd.DataFrame]:
 
               
 # ================= MAIN TRADING LOGIC =================
-def check_for_fvg_retracement_trade():
+def check_for_fvg_retracement_trade(OHLC,symbol):
     
-    OHLC = fetch_ohlc(SYMBOL, TIMEFRAME, LOOKBACK_BARS)
     if OHLC is None:
         mt5.shutdown()
         exit()
-
+    logger.info(f"checking for FVG retracement trade setups on {symbol}...")
     fvg = smc.fvg(OHLC, join_consecutive=True)  # Fair Value Gaps
 
     # Get the most recent valid (non-mitigated) FVG
     valid_fvgs = fvg[~fvg['FVG'].isna() & (fvg['MitigatedIndex'] == 0)]
     
+    valid_fvgs = valid_fvgs[valid_fvgs.index != OHLC.index[-1]]
+
     if valid_fvgs.empty:
         return False
 
+    logger.info(f"found {len(valid_fvgs)} valid FVGs for {symbol}")
     last_fvg = valid_fvgs.iloc[-1]
     fvg_type = last_fvg['FVG']      # 1 = bullish, -1 = bearish
     top      = last_fvg['Top']
     bottom   = last_fvg['Bottom']
     current_price = OHLC['close'].iloc[-1]
+    bid = mt5.symbol_info_tick(SYMBOL).bid
+    ask = mt5.symbol_info_tick(SYMBOL).ask
 
     # ==============================================
     # BULLISH FVG RETRACEMENT SETUP (Long)
     # Price is above FVG → expect pullback into bullish FVG
     # ==============================================
     if fvg_type == 1:  # Bullish FVG
-        if current_price > top:  # price is above the FVG
+        if ask > top:  # price is above the FVG
             zone_mid = (top + bottom) / 2
             
             # Price has retraced into/near the FVG zone
             if bottom <= current_price <= top + (top - bottom)*0.3:  # loose condition - up to 30% above top
                 
-                print(f"[{datetime.now()}] Bullish FVG retracement detected | Zone: {bottom:.5f} - {top:.5f}")
+                logger.info(f"Bullish FVG retracement detected | Zone: {bottom:.5f} - {top:.5f}")
                 
                 # Place BUY order
                 try:
@@ -99,26 +103,25 @@ def check_for_fvg_retracement_trade():
                     result = mt5.order_send(request)
                     ts = datetime.now().strftime("%H:%M:%S")
                     if result and getattr(result, "retcode", None) == mt5.TRADE_RETCODE_DONE:
-                        logger.info(f"[INFO] {ts} - order was Successfully placed")
+                        logger.info(f"{ts} - order was Successfully placed")
                     else:
                         rc = getattr(result, "retcode", None)
-                        logger.error(f"[ERROR] {ts} - Failed to BUY, {retcodedes(rc)}")
+                        logger.error(f"{ts} - Failed to BUY, {retcodedes(rc)}")
                 except Exception as e:
                     ts = datetime.now().strftime("%H:%M:%S")
-                    logger.append(f"[ERROR] {ts} - Error placing BUY orders: {e}")
+                    logger.append(f"{ts} - Error placing BUY orders: {e}")
 
     # ==============================================
     # BEARISH FVG RETRACEMENT SETUP (Short)
     # Price is below FVG → expect rally into bearish FVG
     # ==============================================
     elif fvg_type == -1:  # Bearish FVG
-        if current_price < bottom:  # price is below the FVG
-            zone_mid = (top + bottom) / 2
+        if ask < bottom:  # price is below the FVG
             
             # Price has retraced into/near the FVG zone
             if top >= current_price >= bottom - (top - bottom)*0.3:  # up to 30% below bottom
                 
-                print(f"[{datetime.now()}] Bearish FVG retracement detected | Zone: {bottom:.5f} - {top:.5f}")
+                logger.info(f" Bearish FVG retracement detected | Zone: {bottom:.5f} - {top:.5f}")
                 try:    
                     # Place SELL order
                     request = {
@@ -145,9 +148,14 @@ def check_for_fvg_retracement_trade():
                     logger.append(f"[ERROR] {ts} - Error placing BUY orders: {e}")
     return False
 while True:
-    #if not am.get_active_trades(symbol=SYMBOL):
-    check_for_fvg_retracement_trade()
-    
+    positions=am.get_active_trades()
+    logger.info(f"({len(positions.index)} positions currently open)")
+    if len(positions.index) <= 3:
+        for SYMBOL in SYMBOLS:
+            if SYMBOL not in positions['symbol'].values:
+                OHLC = fetch_ohlc(SYMBOL, TIMEFRAME, LOOKBACK_BARS)
+                check_for_fvg_retracement_trade(OHLC, SYMBOL)
+    logger.info(f"sleeping for 60 seconds...")
     time.sleep(60)
 
 
