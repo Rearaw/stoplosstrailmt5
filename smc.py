@@ -55,8 +55,7 @@ def check_for_fvg_retracement_trade(OHLC,symbol):
         return False
     logger.info(f"checking for FVG retracement trade setups on {symbol}...")
     fvg = smc.fvg(OHLC, join_consecutive=True)  # Fair Value Gaps
-
-    # Get the most recent valid (non-mitigated) FVG
+    fvg = fvg.iloc[:-2]  # Remove the last row# Get the most recent valid (non-mitigated) FVG
     valid_fvgs = fvg[~fvg['FVG'].isna() & (fvg['MitigatedIndex'] == 0)]
     
     valid_fvgs = valid_fvgs[valid_fvgs.index != OHLC.index[-1]]
@@ -283,8 +282,6 @@ def _place_buy_stop_limit(symbol: str, fvg_high: float, fvg_low: float) -> bool:
             "type": mt5.ORDER_TYPE_BUY_STOP_LIMIT,
             "price": fvg_high,
             "stoplimit": fvg_high,
-            "sl": fvg_low - SL_PIPS * 0.0001,
-            "tp": fvg_high + TP_PIPS * 0.0001,
             "magic": 123456,
             "comment": "FVG Stop Limit Buy",
             "type_time": mt5.ORDER_TIME_GTC,
@@ -312,8 +309,6 @@ def _place_sell_stop_limit(symbol: str, fvg_high: float, fvg_low: float) -> bool
             "type": mt5.ORDER_TYPE_SELL_STOP_LIMIT,
             "price": fvg_low,
             "stoplimit": fvg_low,
-            "sl": fvg_high + SL_PIPS * 0.0001,
-            "tp": fvg_low - TP_PIPS * 0.0001,
             "magic": 123456,
             "comment": "FVG Stop Limit Sell",
             "type_time": mt5.ORDER_TIME_GTC,
