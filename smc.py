@@ -14,6 +14,9 @@ import account_manager as am
 import time
 import threading
 from typing import Dict, List, Tuple
+from termcolor import colored
+import colorama
+colorama.init()
 # === SETUP LOGGING ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -21,16 +24,8 @@ logger = logging.getLogger(__name__)
 SYMBOLS          = ["XAUUSDm", "USDJPYm","XAGUSDm","USOILm","GBPUSDm","EURUSDm","USDCHFm","USDCADm","AUDUSDm","NZDUSDm","GBPJPYm","EURJPYm",]
 TIMEFRAME       = mt5.TIMEFRAME_M15
 LOT_SIZE        = 0.01
-SL_PIPS         = 25
-TP_PIPS         = 50
 LOOKBACK_BARS   = 300
-MIN_FVG_SIZE    = 0.00015                   # minimum gap size in price units (filter noise)
 
-# For bullish FVG retracement: we want price to come back down to the FVG zone
-# For bearish FVG retracement: we want price to come back up to the FVG zone
-
-# ================= HELPERS =================
-# Initialize MT5 connection
 if not mt5.initialize():
     print("Failed to initialize MT5.")
     mt5.shutdown()
@@ -49,13 +44,14 @@ def fetch_ohlc(symbol, timeframe, count=500) -> Optional[pd.DataFrame]:
 
               
 # ================= MAIN TRADING LOGIC =================
-def check_for_fvg_retracement_trade(OHLC,symbol):
+def check_for_fvg_retracement_trade(OHLC,symbol,currentFVG=False):
     
     if OHLC is None:
         return False
     logger.info(f"checking for FVG retracement trade setups on {symbol}...")
     fvg = smc.fvg(OHLC, join_consecutive=True)  # Fair Value Gaps
-    fvg = fvg.iloc[:-2]  # Remove the last row# Get the most recent valid (non-mitigated) FVG
+    if not currentFVG:
+        fvg = fvg.iloc[:-2]  # Remove the last row# Get the most recent valid (non-mitigated) FVG
     valid_fvgs = fvg[~fvg['FVG'].isna() & (fvg['MitigatedIndex'] == 0)]
     
     valid_fvgs = valid_fvgs[valid_fvgs.index != OHLC.index[-1]]
@@ -83,9 +79,9 @@ def check_for_fvg_retracement_trade(OHLC,symbol):
             #monitor_fvg(symbol, "BUY", [top, bottom])
             # Price has retraced into/near the FVG zone
             if bottom <= current_price <= top + (top - bottom)*0.3:  # loose condition - up to 30% above top
-                
-                logger.info(f"Bullish FVG retracement detected | Zone: {bottom:.5f} - {top:.5f}")
-                
+
+                logger.info(colored(f"Bullish FVG retracement detected | Zone: {bottom:.5f} - {top:.5f}", 'green'))
+
                 # # Place BUY order
                 try:
                     monitor_fvg(symbol, "BUY", [top, bottom])
@@ -123,8 +119,8 @@ def check_for_fvg_retracement_trade(OHLC,symbol):
             #monitor_fvg(symbol, "SELL", [bottom, top])
             # Price has retraced into/near the FVG zone
             if top >= current_price >= bottom - (top - bottom)*0.3:  # up to 30% below bottom
-                
-                logger.info(f" Bearish FVG retracement detected | Zone: {bottom:.5f} - {top:.5f}")
+
+                logger.info(colored(f" Bearish FVG retracement detected | Zone: {bottom:.5f} - {top:.5f}", 'red'))
                 try:
                     monitor_fvg(symbol, "SELL", [top, bottom])
                     # Place SELL order
@@ -212,7 +208,7 @@ def _monitor_fvg_worker(symbol: str, action: str, fvg_high: float, fvg_low: floa
     half_retrace = fvg_range / 2
     validated = False
     timeout_counter = 0
-    max_timeout = 1440  # 2 hours at 5-second intervals
+    max_timeout = 1440  # 72 minutes hours at 3-second intervals
     
     try:
         while timeout_counter < max_timeout:
@@ -220,7 +216,7 @@ def _monitor_fvg_worker(symbol: str, action: str, fvg_high: float, fvg_low: floa
             if tick is None:
                 logger.warning(f"Failed to get tick for {symbol}")
                 timeout_counter += 1
-                time.sleep(5)
+                time.sleep(3)
                 continue
             
             current_price = tick.bid if action == "SELL" else tick.ask
@@ -279,7 +275,7 @@ def _place_buy_stop_limit(symbol: str, fvg_high: float, fvg_low: float) -> bool:
             "action": mt5.TRADE_ACTION_PENDING,
             "symbol": symbol,
             "volume": LOT_SIZE,
-            "type": mt5.ORDER_TYPE_BUY_STOP_LIMIT,
+            "type": mt5.ORDER_TYPE_BUY_STOP,
             "price": fvg_high,
             "stoplimit": fvg_high,
             "magic": 123456,
@@ -306,7 +302,7 @@ def _place_sell_stop_limit(symbol: str, fvg_high: float, fvg_low: float) -> bool
             "action": mt5.TRADE_ACTION_PENDING,
             "symbol": symbol,
             "volume": LOT_SIZE,
-            "type": mt5.ORDER_TYPE_SELL_STOP_LIMIT,
+            "type": mt5.ORDER_TYPE_SELL_STOP,
             "price": fvg_low,
             "stoplimit": fvg_low,
             "magic": 123456,
@@ -343,12 +339,18 @@ def get_active_monitors() -> List[Dict]:
 try:
     while True:
         positions=am.get_active_trades()
-        logger.info(f"({len(positions.index)} positions currently open)")
-        if len(positions.index) <= 3:
+        if positions is not None:
+            logger.info(colored(f"({len(positions.index)} positions currently open)", 'yellow'))
+            if len(positions.index) <= 3:
+                for SYMBOL in SYMBOLS:
+                    if SYMBOL not in positions['symbol'].values:
+                        OHLC = fetch_ohlc(SYMBOL, TIMEFRAME, LOOKBACK_BARS)
+                        check_for_fvg_retracement_trade(OHLC, SYMBOL)
+        else:
+            logger.info(colored(f"(no positions currently open)", 'yellow'))
             for SYMBOL in SYMBOLS:
-                if SYMBOL not in positions['symbol'].values:
-                    OHLC = fetch_ohlc(SYMBOL, TIMEFRAME, LOOKBACK_BARS)
-                    check_for_fvg_retracement_trade(OHLC, SYMBOL)
+                OHLC = fetch_ohlc(SYMBOL, TIMEFRAME, LOOKBACK_BARS)
+                check_for_fvg_retracement_trade(OHLC, SYMBOL, currentFVG=True)
         logger.info(f"sleeping for 60 seconds...")
 
         time.sleep(60)
@@ -356,7 +358,7 @@ try:
         if active:
             logger.info(f"Currently {len(active)} active FVG monitors")
             for m in active:
-                logger.info(f"  • {m['id']}  →  {m['status']}")
+                logger.info(colored(f"  • {m['id']}  →  {m['status']}", 'yellow'))
 except KeyboardInterrupt:
     logger.info("Stopping FVG monitoring...")
 finally:
