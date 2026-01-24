@@ -8,7 +8,8 @@ USE_BREAK_EVEN=True
 LOGIN = None          # MT5 account login (set to your account number, e.g., 123456)
 PASSWORD = None       # MT5 account password (set to your password)
 SERVER = None         # MT5 server name (set to your broker's server, e.g., "Broker-Demo")
-volatility_map={"high":{"TRAIL_DISTANCE": 50, # Fixed trailing distance in points
+RR=2.0                # Risk-Reward ratio for trades
+volatility_map={"high":{"TRAIL_DISTANCE": 100, # Fixed trailing distance in points
                      
                     "MIN_PROFIT": 100,   # Minimum profit in account currency to start trailing
                     "MIN_PRICE_MOVE":50.0,
@@ -25,7 +26,7 @@ volatility_map={"high":{"TRAIL_DISTANCE": 50, # Fixed trailing distance in point
 
 
 volatility_currency_pairs={
-    "high":["XAUUSDm"],
+    "high":["XAUUSDm","XAGUSDm","USOILm","UKOILm"],
     "medium":["GBPUSDm","EURUSDm","USDCHFm","USDCADm","AUDUSDm","NZDUSDm","GBPJPYm","EURJPYm","USDJPYm"],
     "low":["EURCHFm","EURGBPm","AUDJPYm","CADJPYm","CHFJPYm","NZDJPYm"],}
 
@@ -101,7 +102,7 @@ try:
                     try:
                         # Define initial SL pips for each volatility level
                         initial_sl_pips = {
-                            "high": 778,    # ~500kes approximate 500kes
+                            "high": 389,    # ~500kes approximate 500kes
                             "medium": 60,   # ~500kes pips for medium volatility(jpys)
                             "low": 30       # 30 pips for low volatility
                         }
@@ -116,12 +117,17 @@ try:
                             initial_sl = pos.price_open - sl_points * point
                         else:  # SELL
                             initial_sl = pos.price_open + sl_points * point
-
+                        if pos.tp==0:
+                            # Set take profit based on risk-reward ratio
+                            if pos.type == 0:  # BUY
+                                tp_price = pos.price_open + (sl_points * RR) * point
+                            else:  # SELL
+                                tp_price = pos.price_open - (sl_points * RR) * point
                         request = {
                             "action": mt5.TRADE_ACTION_SLTP,
                             "symbol": symbol,
                             "sl": round(initial_sl, digits),
-                            "tp": pos.tp,
+                            "tp": round(tp_price, digits),
                             "position": ticket,
                         }
                         result = mt5.order_send(request)
