@@ -12,6 +12,7 @@ import mplfinance as mpf
 from scipy.signal import find_peaks
 from scipy.stats import linregress
 from strategies.smma_mt5_strategy import smma
+from strategies.smma_mt5_strategy import triple_smma_stateful_strategy as smma_strategy
 #import pattern_recognition as pr
 import talib as ta
 import colorama
@@ -21,9 +22,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 # ================= CONFIGURATION =================
 SYMBOLS          = ["XAUUSDm"]
-TIMEFRAME       = mt5.TIMEFRAME_M15
+TIMEFRAME       = mt5.TIMEFRAME_M5
 LOT_SIZE        = 0.01
-LOOKBACK_BARS   = 50
+LOOKBACK_BARS   = 200
 def peak_detection(close: pd.Series, distance: int = 10, prominence: float = 0.01) -> Tuple[np.ndarray, np.ndarray]:
     """
     Detects peaks and troughs in a Close price series using scipy.signal.find_peaks.
@@ -275,6 +276,7 @@ def main(symbols: List[str]):
 # )
 #     #t=reversal_patterns( df_ohlcv)
     indicator = indicators()
+    signal=smma_strategy(df_ohlcv,)
     results=detect_candlestick_patterns(df_ohlcv)
     df_ohlcv = indicator.smma(df_ohlcv)
     df_ohlcv = indicator.RSI(df_ohlcv)
