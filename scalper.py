@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 SYMBOLS          = ["XAUUSDm"]
 TIMEFRAME       = mt5.TIMEFRAME_M15
 LOT_SIZE        = 0.01
-LOOKBACK_BARS   = 500
+LOOKBACK_BARS   = 50
 def peak_detection(close: pd.Series, distance: int = 10, prominence: float = 0.01) -> Tuple[np.ndarray, np.ndarray]:
     """
     Detects peaks and troughs in a Close price series using scipy.signal.find_peaks.
@@ -106,93 +106,154 @@ def fetch_ohlcv(symbol, timeframe, count=100) -> Optional[pd.DataFrame]:
     df=df.rename(columns={"tick_volume": "volume"})
     df.set_index('time', inplace=True)
     return df
-def plot_candlestick_with_trends(
-    df: pd.DataFrame,
-    distance: int = 5,
-    prominence: float = 0.01,
-    fit_peaks: bool = True,
-    fit_troughs: bool = True
-):
+def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Plots a candlestick chart from OHLCV data, marks detected peaks and troughs on Close prices,
-    and overlays linear best-fit (regression) lines on the peaks and/or troughs.
+    Detect candlestick patterns using TA-Lib and group them by complexity.
     
-    Parameters
-    ----------
-    df : pd.DataFrame
-        DataFrame with columns ['Open', 'High', 'Low', 'Close'] (Volume optional/ignored).
-        Index should preferably be a DatetimeIndex for proper date labeling.
-    distance, prominence : parameters passed to peak_detection.
-    fit_peaks / fit_troughs : whether to compute and plot regression lines.
+    Parameters:
+    df (pd.DataFrame): DataFrame with 'open', 'high', 'low', 'close' columns (case-insensitive)
+    
+    Returns:
+    pd.DataFrame: Original DataFrame with three new columns:
+        - 'single_candle_patterns': comma-separated bullish/bearish single patterns
+        - 'two_candle_patterns': comma-separated bullish/bearish two-candle patterns
+        - 'three_plus_candle_patterns': comma-separated bullish/bearish three+ patterns
     """
-    # Extract Close series and detect extrema
-    close = df['close']
-    peaks, troughs = peak_detection(df, distance=distance, prominence=prominence)
+    df = df.copy()
     
-    # Prepare numerical x-axis (integer positions for positioning candlesticks)
-    x_pos = np.arange(len(df))
+    # Normalize column names to lowercase
+    df.columns = df.columns.str.lower()
     
-    # Linear regression for peaks (resistance trend)
-    trend_peaks = None
-    if fit_peaks and len(peaks) >= 2:
-        slope_p, intercept_p, _, _, _ = linregress(x_pos[peaks], close.iloc[peaks].values)
-        trend_peaks = slope_p * x_pos + intercept_p
+    # Validate required columns
+    required_cols = {'open', 'high', 'low', 'close'}
+    if not required_cols.issubset(df.columns):
+        raise ValueError(f"DataFrame must contain columns: {required_cols}")
     
-    # Linear regression for troughs (support trend)
-    trend_troughs = None
-    if fit_troughs and len(troughs) >= 2:
-        slope_t, intercept_t, _, _, _ = linregress(x_pos[troughs], close.iloc[troughs].values)
-        trend_troughs = slope_t * x_pos + intercept_t
+    # Extract OHLC data
+    open_prices = df['open'].values.astype(float)
+    high_prices = df['high'].values.astype(float)
+    low_prices = df['low'].values.astype(float)
+    close_prices = df['close'].values.astype(float)
     
-    # ────────────────────────────────────────────────
-    # Plotting
-    # ────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(14, 7))
+    # Pattern groupings
+    single_candle = {
+        'CDLBELTHOLD': 'Belt Hold',
+        'CDLCLOSINGMARUBOZU': 'Closing Marubozu',
+        'CDLDOJI': 'Doji',
+        'CDLDRAGONFLYDOJI': 'Dragonfly Doji',
+        'CDLGRAVESTONEDOJI': 'Gravestone Doji',
+        'CDLHAMMER': 'Hammer',
+        'CDLHANGINGMAN': 'Hanging Man',
+        'CDLINVERTEDHAMMER': 'Inverted Hammer',
+        'CDLLONGLEGGEDDOJI': 'Long Legged Doji',
+        'CDLLONGLINE': 'Long Line',
+        'CDLMARUBOZU': 'Marubozu',
+        'CDLRICKSHAWMAN': 'Rickshaw Man',
+        'CDLSHOOTINGSTAR': 'Shooting Star',
+        'CDLSPINNINGTOP': 'Spinning Top',
+        'CDLTAKURI': 'Takuri',
+        'CDLHIGHWAVE': 'High Wave',
+        'CDLSHORTLINE': 'Short Line',
+        'CDLSTALLEDPATTERN': 'Stalled Pattern',
+    }
     
-    # Draw candlesticks
-    for i in x_pos:
-        o, h, l, c = df['open'].iloc[i], df['high'].iloc[i], df['low'].iloc[i], df['close'].iloc[i]
-        color = 'green' if c >= o else 'red'
-        
-        # High-Low wick
-        ax.plot([i, i], [l, h], color='black', linewidth=1)
-        
-        # Open-Close body
-        body_bottom = min(o, c)
-        body_height = abs(o - c)
-        ax.add_patch(plt.Rectangle(
-            (i - 0.3, body_bottom), 0.6, max(body_height, 0.001),  # tiny height if flat
-            facecolor=color, edgecolor='black', linewidth=1, alpha=0.8
-        ))
+    two_candle = {
+        'CDLCOUNTERATTACK': 'Counterattack',
+        'CDLDARKCLOUDCOVER': 'Dark Cloud Cover',
+        'CDLENGULFING': 'Engulfing',
+        'CDLGAPSIDESIDEWHITE': 'Gap Side-by-Side White',
+        'CDLHARAMI': 'Harami',
+        'CDLHARAMICROSS': 'Harami Cross',
+        'CDLHOMINGPIGEON': 'Homing Pigeon',
+        'CDLINNECK': 'In Neck',
+        'CDLONNECK': 'On Neck',
+        'CDLPIERCING': 'Piercing',
+        'CDLSEPARATINGLINES': 'Separating Lines',
+        'CDLTASUKIGAP': 'Tasuki Gap',
+        'CDLMATCHINGLOW': 'Matching Low',
+        'CDLKICKING': 'Kicking',
+    }
+    
+    three_plus_candle = {
+        'CDL2CROWS': '2 Crows',
+        'CDL3BLACKCROWS': '3 Black Crows',
+        'CDL3INSIDE': '3 Inside',
+        'CDL3LINESTRIKE': '3 Line Strike',
+        'CDL3OUTSIDE': '3 Outside',
+        'CDL3STARSINSOUTH': '3 Stars in South',
+        'CDL3WHITESOLDIERS': '3 White Soldiers',
+        'CDLABANDONEDBABY': 'Abandoned Baby',
+        'CDLADVANCEBLOCK': 'Advance Block',
+        'CDLBREAKAWAY': 'Breakaway',
+        'CDLCONCEALBABYSWALL': 'Concealing Baby Swallow',
+        'CDLDOJISTAR': 'Doji Star',
+        'CDLEVENINGDOJISTAR': 'Evening Doji Star',
+        'CDLEVENINGSTAR': 'Evening Star',
+        'CDLHIKKAKE': 'Hikkake',
+        'CDLHIKKAKEMOD': 'Hikkake Modified',
+        'CDLIDENTICAL3CROWS': 'Identical 3 Crows',
+        'CDLLADDERBOTTOM': 'Ladder Bottom',
+        'CDLMATHOLD': 'Mat Hold',
+        'CDLMORNINGDOJISTAR': 'Morning Doji Star',
+        'CDLMORNINGSTAR': 'Morning Star',
+        'CDLRISEFALL3METHODS': 'Rise/Fall 3 Methods',
+        'CDLSTICKSANDWICH': 'Stick Sandwich',
+        'CDLTRISTAR': 'Tristar',
+        'CDLTHRUSTING': 'Thrusting',
+        'CDLUNIQUE3RIVER': 'Unique 3 River',
+        'CDLUPSIDEGAP2CROWS': 'Upside Gap 2 Crows',
+        'CDLXSIDEGAP3METHODS': 'Side Gap 3 Methods',
+    }
+    
+# Initialize collection lists (one list per row)
+    single_lists = [[] for _ in range(len(df))]
+    two_lists = [[] for _ in range(len(df))]
+    three_plus_lists = [[] for _ in range(len(df))]
+    
+    
+    # Process single-candle patterns
+    for func_name, display_name in single_candle.items():
+        func = getattr(ta, func_name)
+        results = func(open_prices, high_prices, low_prices, close_prices)
+        for idx, value in enumerate(results):
+            if value != 0:
+                direction = 'Bullish ' if value > 0 else 'Bearish '
+                if display_name in ['Doji', 'Dragonfly Doji', 'Gravestone Doji', 
+                                    'Long Legged Doji', 'Spinning Top', 'Rickshaw Man', 
+                                    'High Wave', 'Takuri', 'Short Line']:
+                    pattern_str = display_name
+                else:
+                    pattern_str = direction + display_name
+                single_lists[idx].append(pattern_str)
+    
+    # Process two-candle patterns (similar structure)
+    for func_name, display_name in two_candle.items():
+        func = getattr(ta, func_name)
+        results = func(open_prices, high_prices, low_prices, close_prices)
+        for idx, value in enumerate(results):
+            if value != 0:
+                direction = 'Bullish ' if value > 0 else 'Bearish '
+                pattern_str = direction + display_name
+                two_lists[idx].append(pattern_str)
+    
+    # Process three-plus-candle patterns (with confirmation handling)
+    for func_name, display_name in three_plus_candle.items():
+        func = getattr(ta, func_name)
+        results = func(open_prices, high_prices, low_prices, close_prices)
+        for idx, value in enumerate(results):
+            if value != 0:
+                confirmation = ' (confirmed)' if abs(value) == 200 else ''
+                direction = 'Bullish ' if value > 0 else 'Bearish '
+                pattern_str = direction + display_name + confirmation
+                three_plus_lists[idx].append(pattern_str)
+    
+    # Assign joined strings to columns (aligns with original index automatically)
+    df['single_candle_patterns'] = [', '.join(patterns) if patterns else '' for patterns in single_lists]
+    df['two_candle_patterns'] = [', '.join(patterns) if patterns else '' for patterns in two_lists]
+    df['three_plus_candle_patterns'] = [', '.join(patterns) if patterns else '' for patterns in three_plus_lists]
+    
+    return df
 
-    if len(peaks) > 0:
-        ax.plot(x_pos[peaks], close.iloc[peaks], 'v', color='red', markersize=10, label='Peaks')
-    if len(troughs) > 0:
-        ax.plot(x_pos[troughs], close.iloc[troughs], '^', color='blue', markersize=10, label='Troughs')
-    
-    # Overlay trend lines
-    if trend_peaks is not None:
-        ax.plot(x_pos, trend_peaks, '--', color='red', linewidth=2, label='Peak Trend Line')
-    if trend_troughs is not None:
-        ax.plot(x_pos, trend_troughs, '--', color='blue', linewidth=2, label='Trough Trend Line')
-    
-    # Axes and labels
-    ax.set_ylabel('Price')
-    ax.set_title('Candlestick Chart with Detected Peaks/Troughs and Linear Trend Lines')
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc='upper left')
-    
-    # X-axis: use dates if available
-    if isinstance(df.index, pd.DatetimeIndex):
-        step = max(1, len(df) // 15)  # ~15 labels max
-        ax.set_xticks(x_pos[::step])
-        ax.set_xticklabels(df.index[::step].strftime('%Y-%m-%d'), rotation=45, ha='right')
-    else:
-        ax.set_xlabel('Index')
-    
-    ax.set_xlim(-0.5, len(df) - 0.5)
-    plt.tight_layout()
-    plt.show()
 
 def plot_indicator_with_signals(
     df: pd.DataFrame,) -> None:
@@ -214,6 +275,7 @@ def main(symbols: List[str]):
 # )
 #     #t=reversal_patterns( df_ohlcv)
     indicator = indicators()
+    results=detect_candlestick_patterns(df_ohlcv)
     df_ohlcv = indicator.smma(df_ohlcv)
     df_ohlcv = indicator.RSI(df_ohlcv)
     df_ohlcv = indicator.VWAP(df_ohlcv)
