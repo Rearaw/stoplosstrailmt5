@@ -100,3 +100,84 @@ def smma_crossover_strategy(
     return {
         "trend": trend
     }
+def triple_smma_stateful_strategy(
+    df: pd.DataFrame,
+    length: int = 70,
+    use_retests: bool = True,
+    retest_depth: float = 0.1
+) -> pd.DataFrame:
+    """
+    Stateful adaptation of the Pine Script SMMA zone strategy.
+    Adds columns for SMMA values, bias, entries, and simulated position.
+    Returns the enhanced DataFrame for backtesting/analysis.
+    """
+    df = df.copy()#.reset_index(drop=True)  # Ensure contiguous integer index
+    
+    # Calculate SMMAs
+    df['smma_high']  = smma(df['high'], length)
+    df['smma_low']   = smma(df['low'], length)
+    df['smma_close'] = smma(df['close'], length)
+
+    df["is_bullish"] = df['close']>df["open"]
+    df['is_bearish'] = df['close']<df["open"]
+    # Bias: persistent directional state
+    above_zone = df['close'] > df['smma_high']
+    below_zone = df['close'] < df['smma_low']
+    
+    bias = np.zeros(len(df))
+    for i in range(1, len(df)):
+        if above_zone.iloc[i]:
+            bias[i] = 1 # bullish bias
+        elif below_zone.iloc[i]:
+            bias[i] = -1 # bearish bias
+        else:
+            bias[i] = bias[i - 1]
+    df['bias'] = bias
+    
+    # Breakout detection (crossover/crossunder)
+    long_breakout  = (df['close'] > df['smma_high']) & (df['close'].shift(1) <= df['smma_high'].shift(1))
+    short_breakout = (df['close'] < df['smma_low'])  & (df['close'].shift(1) >= df['smma_low'].shift(1))
+    
+    # Retest zone depth (absolute price units)
+    zone_width = df['smma_high'] - df['smma_low']
+    retest_zone = zone_width * (retest_depth / 100)
+    
+    # Retest entries (gated by bias)
+    long_retest = use_retests & (
+        (df['bias'] == 1) &
+        (df['low'] <= df['smma_low'] + retest_zone) &
+        (df['close'] > df['smma_high'])
+    )
+
+    short_retest = use_retests & (
+        (df['bias'] == -1) &
+        (df['high'] >= df['smma_high'] - retest_zone) &
+        (df['close'] < df['smma_low'])
+    )
+    
+    
+    # Combined entry signals
+    long_entry  = long_breakout | (long_retest & use_retests)
+    short_entry = short_breakout | (short_retest & use_retests)
+    df['long_entry']  = long_entry & df["is_bullish"]
+    df['short_entry'] = short_entry & df["is_bearish"]
+    
+    #df['long_entry']  = long_entry
+    #df['short_entry'] = short_entry
+    
+    # Position simulation (1 = long, -1 = short, 0 = flat)
+    # Reverses on opposite entry; ignores repeated same-direction entry
+    position = np.zeros(len(df))
+    current_pos = 0
+    for i in range(len(df)):
+        if long_entry.iloc[i]:
+            current_pos = 1
+        elif short_entry.iloc[i]:
+            current_pos = -1
+        position[i] = current_pos
+    df['position'] = position
+    
+    # Optional: trade direction change for signaling
+   # df['trade_signal'] = df['position'].diff()  # +2 = flat→long, -2 = flat→short, etc.
+    
+    return df
