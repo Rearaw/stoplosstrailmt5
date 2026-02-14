@@ -8,15 +8,21 @@ from termcolor import colored
 import pandas_ta as pta
 import account_manager as am #get open positions
 import logging
+import time
+from datetime import datetime
 import mplfinance as mpf
 from scipy.signal import find_peaks
 from scipy.stats import linregress
 from strategies.smma_mt5_strategy import smma
 from strategies.smma_mt5_strategy import triple_smma_stateful_strategy as smma_strategy
-#import pattern_recognition as pr
+import pattern_recognition as pr
 import talib as ta
+import deal as d
 import colorama
+from colorama import Fore, Style, init
 colorama.init()
+from sleeper import sleeper
+init(autoreset=True)
 # === SETUP LOGGING ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -79,21 +85,6 @@ class indicators:
         #df['BB_middle'] = ta.SMA(df['close'], timeperiod=length, nbdevup=std_dev, nbdevdn=1.4, matype=0)
         df['BB_lower'] = bbandd
         return df
-def reversal_patterns(df: pd.DataFrame) -> pd.DataFrame:
-    """Detects candlestick reversal patterns using talib"""
-    o = df['open'].values
-    h = df['high'].values
-    l = df['low'].values
-    c = df['close'].values
-    
-    df['hammer'] = ta.CDLHAMMER(o, h, l, c)
-    df['inverted_hammer'] = ta.CDLINVERTEDHAMMER(o, h, l, c)
-    df['engulfing'] = ta.CDLENGULFING(o, h, l, c)
-    df['morning_star'] = ta.CDLMORNINGSTAR(o, h, l, c)
-    df['evening_star'] = ta.CDLEVENINGSTAR(o, h, l, c)
-    df['harami'] = ta.CDLHARAMI(o, h, l, c)
-    
-    return df
 def continuation_patterns(df: pd.DataFrame) -> pd.DataFrame:
     pass
 def fetch_ohlcv(symbol, timeframe, count=100) -> Optional[pd.DataFrame]:
@@ -107,177 +98,33 @@ def fetch_ohlcv(symbol, timeframe, count=100) -> Optional[pd.DataFrame]:
     df=df.rename(columns={"tick_volume": "volume"})
     df.set_index('time', inplace=True)
     return df
-def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Detect candlestick patterns using TA-Lib and group them by complexity.
-    
-    Parameters:
-    df (pd.DataFrame): DataFrame with 'open', 'high', 'low', 'close' columns (case-insensitive)
-    
-    Returns:
-    pd.DataFrame: Original DataFrame with three new columns:
-        - 'single_candle_patterns': comma-separated bullish/bearish single patterns
-        - 'two_candle_patterns': comma-separated bullish/bearish two-candle patterns
-        - 'three_plus_candle_patterns': comma-separated bullish/bearish three+ patterns
-    """
-    df = df.copy()
-    
-    # Normalize column names to lowercase
-    df.columns = df.columns.str.lower()
-    
-    # Validate required columns
-    required_cols = {'open', 'high', 'low', 'close'}
-    if not required_cols.issubset(df.columns):
-        raise ValueError(f"DataFrame must contain columns: {required_cols}")
-    
-    # Extract OHLC data
-    open_prices = df['open'].values.astype(float)
-    high_prices = df['high'].values.astype(float)
-    low_prices = df['low'].values.astype(float)
-    close_prices = df['close'].values.astype(float)
-    
-    # Pattern groupings
-    single_candle = {
-        'CDLBELTHOLD': 'Belt Hold',
-        'CDLCLOSINGMARUBOZU': 'Closing Marubozu',
-        'CDLDOJI': 'Doji',
-        'CDLDRAGONFLYDOJI': 'Dragonfly Doji',
-        'CDLGRAVESTONEDOJI': 'Gravestone Doji',
-        'CDLHAMMER': 'Hammer',
-        'CDLHANGINGMAN': 'Hanging Man',
-        'CDLINVERTEDHAMMER': 'Inverted Hammer',
-        'CDLLONGLEGGEDDOJI': 'Long Legged Doji',
-        'CDLLONGLINE': 'Long Line',
-        'CDLMARUBOZU': 'Marubozu',
-        'CDLRICKSHAWMAN': 'Rickshaw Man',
-        'CDLSHOOTINGSTAR': 'Shooting Star',
-        'CDLSPINNINGTOP': 'Spinning Top',
-        'CDLTAKURI': 'Takuri',
-        'CDLHIGHWAVE': 'High Wave',
-        'CDLSHORTLINE': 'Short Line',
-        'CDLSTALLEDPATTERN': 'Stalled Pattern',
-    }
-    
-    two_candle = {
-        'CDLCOUNTERATTACK': 'Counterattack',
-        'CDLDARKCLOUDCOVER': 'Dark Cloud Cover',
-        'CDLENGULFING': 'Engulfing',
-        'CDLGAPSIDESIDEWHITE': 'Gap Side-by-Side White',
-        'CDLHARAMI': 'Harami',
-        'CDLHARAMICROSS': 'Harami Cross',
-        'CDLHOMINGPIGEON': 'Homing Pigeon',
-        'CDLINNECK': 'In Neck',
-        'CDLONNECK': 'On Neck',
-        'CDLPIERCING': 'Piercing',
-        'CDLSEPARATINGLINES': 'Separating Lines',
-        'CDLTASUKIGAP': 'Tasuki Gap',
-        'CDLMATCHINGLOW': 'Matching Low',
-        'CDLKICKING': 'Kicking',
-    }
-    
-    three_plus_candle = {
-        'CDL2CROWS': '2 Crows',
-        'CDL3BLACKCROWS': '3 Black Crows',
-        'CDL3INSIDE': '3 Inside',
-        'CDL3LINESTRIKE': '3 Line Strike',
-        'CDL3OUTSIDE': '3 Outside',
-        'CDL3STARSINSOUTH': '3 Stars in South',
-        'CDL3WHITESOLDIERS': '3 White Soldiers',
-        'CDLABANDONEDBABY': 'Abandoned Baby',
-        'CDLADVANCEBLOCK': 'Advance Block',
-        'CDLBREAKAWAY': 'Breakaway',
-        'CDLCONCEALBABYSWALL': 'Concealing Baby Swallow',
-        'CDLDOJISTAR': 'Doji Star',
-        'CDLEVENINGDOJISTAR': 'Evening Doji Star',
-        'CDLEVENINGSTAR': 'Evening Star',
-        'CDLHIKKAKE': 'Hikkake',
-        'CDLHIKKAKEMOD': 'Hikkake Modified',
-        'CDLIDENTICAL3CROWS': 'Identical 3 Crows',
-        'CDLLADDERBOTTOM': 'Ladder Bottom',
-        'CDLMATHOLD': 'Mat Hold',
-        'CDLMORNINGDOJISTAR': 'Morning Doji Star',
-        'CDLMORNINGSTAR': 'Morning Star',
-        'CDLRISEFALL3METHODS': 'Rise/Fall 3 Methods',
-        'CDLSTICKSANDWICH': 'Stick Sandwich',
-        'CDLTRISTAR': 'Tristar',
-        'CDLTHRUSTING': 'Thrusting',
-        'CDLUNIQUE3RIVER': 'Unique 3 River',
-        'CDLUPSIDEGAP2CROWS': 'Upside Gap 2 Crows',
-        'CDLXSIDEGAP3METHODS': 'Side Gap 3 Methods',
-    }
-    
-# Initialize collection lists (one list per row)
-    single_lists = [[] for _ in range(len(df))]
-    two_lists = [[] for _ in range(len(df))]
-    three_plus_lists = [[] for _ in range(len(df))]
-    
-    
-    # Process single-candle patterns
-    for func_name, display_name in single_candle.items():
-        func = getattr(ta, func_name)
-        results = func(open_prices, high_prices, low_prices, close_prices)
-        for idx, value in enumerate(results):
-            if value != 0:
-                direction = 'Bullish ' if value > 0 else 'Bearish '
-                if display_name in ['Doji', 'Dragonfly Doji', 'Gravestone Doji', 
-                                    'Long Legged Doji', 'Spinning Top', 'Rickshaw Man', 
-                                    'High Wave', 'Takuri', 'Short Line']:
-                    pattern_str = display_name
-                else:
-                    pattern_str = direction + display_name
-                single_lists[idx].append(pattern_str)
-    
-    # Process two-candle patterns (similar structure)
-    for func_name, display_name in two_candle.items():
-        func = getattr(ta, func_name)
-        results = func(open_prices, high_prices, low_prices, close_prices)
-        for idx, value in enumerate(results):
-            if value != 0:
-                direction = 'Bullish ' if value > 0 else 'Bearish '
-                pattern_str = direction + display_name
-                two_lists[idx].append(pattern_str)
-    
-    # Process three-plus-candle patterns (with confirmation handling)
-    for func_name, display_name in three_plus_candle.items():
-        func = getattr(ta, func_name)
-        results = func(open_prices, high_prices, low_prices, close_prices)
-        for idx, value in enumerate(results):
-            if value != 0:
-                confirmation = ' (confirmed)' if abs(value) == 200 else ''
-                direction = 'Bullish ' if value > 0 else 'Bearish '
-                pattern_str = direction + display_name + confirmation
-                three_plus_lists[idx].append(pattern_str)
-    
-    # Assign joined strings to columns (aligns with original index automatically)
-    df['single_candle_patterns'] = [', '.join(patterns) if patterns else '' for patterns in single_lists]
-    df['two_candle_patterns'] = [', '.join(patterns) if patterns else '' for patterns in two_lists]
-    df['three_plus_candle_patterns'] = [', '.join(patterns) if patterns else '' for patterns in three_plus_lists]
-    
-    return df
 
 
-def plot_indicator_with_signals(
-    df: pd.DataFrame,) -> None:
-    pass
+
+
 def main(symbols: List[str]):
     for symbol in SYMBOLS:
         print(colored(f"Analyzing {symbol}...", 'cyan'))
         df_ohlcv = fetch_ohlcv(symbol, TIMEFRAME, LOOKBACK_BARS)
+    signal=smma_strategy(df_ohlcv,)
+    current= signal.iloc[-2] # Use second-to-last row to avoid lookahead bias
+    if current['long_entry']:
+        logger.info(colored(f"Long entry signal detected for {symbol}", 'green'))
+        d.place_buy_orders(LOT_SIZE, 1, symbol)
+    elif current['short_entry']:
+        logger.info(colored(f"Short entry signal detected for {symbol}", 'red'))
+        d.place_sell_orders(LOT_SIZE, 1, symbol)
+    else:
+        logger.info(colored(f"No entry signal detected for {symbol}", 'yellow'))
+    return
 
-    #Open,high,low,close,volume =df["open"],df["high"],df["low"],df["close"],df["tick_volume"]
-    #t=pr.find_trend_change_points(high, low)
-    #peaks, troughs = peak_detection(close, distance=5, prominence=0.01)
-#     #plot_candlestick_with_trends(
-#                                     df_ohlcv,
-#                                     distance=10,          # adjust based on your timeframe (e.g., higher for daily data)
-#                                     prominence=0.5,       # adjust to filter only significant swings
-#                                     fit_peaks=True,
-#                                     fit_troughs=True
-# )
-#     #t=reversal_patterns( df_ohlcv)
+def main2(symbols: List[str]):
+    for symbol in SYMBOLS:
+        print(colored(f"Analyzing {symbol}...", 'cyan'))
+        df_ohlcv = fetch_ohlcv(symbol, TIMEFRAME, LOOKBACK_BARS)
     indicator = indicators()
     signal=smma_strategy(df_ohlcv,)
-    results=detect_candlestick_patterns(df_ohlcv)
+    results=pr.detect_candlestick_patterns(df_ohlcv)
     df_ohlcv = indicator.smma(df_ohlcv)
     df_ohlcv = indicator.RSI(df_ohlcv)
     df_ohlcv = indicator.VWAP(df_ohlcv)
@@ -306,15 +153,20 @@ def main(symbols: List[str]):
 
 
 if __name__ == "__main__":
-    positions=am.get_active_trades()
-    if positions is None:
-        logger.info(colored(f"(no positions currently open)", 'yellow'))
-        main(SYMBOLS)
-    elif len(positions.index) <= 3:
-        logger.info(colored(f"({len(positions.index)} positions currently open)", 'yellow'))
-        main(SYMBOLS)
+    try:
+        while True:
+            positions=am.get_active_trades()
+            if positions is None:
+                logger.info(colored(f"(no positions currently open)", 'yellow'))
+                main(SYMBOLS)
+            elif len(positions.index) <= 3:
+                logger.info(colored(f"({len(positions.index)} positions currently open)", 'yellow'))
+                main(SYMBOLS)
 
-    else:      
-        logger.info(colored("Maximum number of open positions reached. No new trades will be initiated.", 'red'))
-        main(SYMBOLS)
-    mt5.shutdown()
+            else:      
+                logger.info(colored("Maximum number of open positions reached. No new trades will be initiated.", 'red'))
+                main(SYMBOLS)
+            sleeper(300) # Check every 5 minutes
+    except KeyboardInterrupt:
+        logger.info("Stopping smma monitoring...")
+        mt5.shutdown()
