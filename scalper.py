@@ -1,3 +1,5 @@
+import os.path, sys
+sys.path.append(os.path.abspath(os.path.expanduser("~/smart-money-concepts/")))
 import MetaTrader5 as mt5
 import pandas as pd
 import numpy as np
@@ -18,6 +20,7 @@ from strategies.smma_mt5_strategy import triple_smma_stateful_strategy as smma_s
 import pattern_recognition as pr
 import talib as ta
 import deal as d
+from smartmoneyconcepts import smc
 import colorama
 from colorama import Fore, Style, init
 colorama.init()
@@ -107,7 +110,9 @@ def main(symbols: List[str]):
         print(colored(f"Analyzing {symbol}...", 'cyan'))
         df_ohlcv = fetch_ohlcv(symbol, TIMEFRAME, LOOKBACK_BARS)
     signal=smma_strategy(df_ohlcv,)
-    current= signal.iloc[-2] # Use second-to-last row to avoid lookahead bias
+    fvg = smc.fvg(df_ohlcv, join_consecutive=False)
+    current= signal.iloc[-2]
+    combined=pd.concat([signal,fvg],axis=1) # Use second-to-last row to avoid lookahead bias
     if current['long_entry']:
         logger.info(colored(f"Long entry signal detected for {symbol}", 'green'))
         d.place_buy_orders(LOT_SIZE, 1, symbol)
