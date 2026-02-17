@@ -21,6 +21,7 @@ colorama.init()
 from sleeper import sleeper
 init(autoreset=True)
 import pattern_recognition as pr
+from datetime import datetime
 
 FVG_FORMING_PATTERNS = {
     'bullish': ['Belt Hold', 'Marubozu', 'Long Line', 'Engulfing', '3 Inside', '3 Outside',
@@ -39,7 +40,7 @@ CONTINUATION_PATTERNS = {
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 # ================= CONFIGURATION =================
-SYMBOLS          = ["XAUUSDm"]
+SYMBOLS          = ["XAUUSDm", "USDCADm","EURUSDm", "GBPUSDm", "AUDUSDm", "NZDUSDm", "USDJPYm","GBPJPYm", "EURJPYm", "AUDJPYm", "NZDJPYm"]
 TIMEFRAME       = mt5.TIMEFRAME_M5
 LOT_SIZE        = 0.01
 LOOKBACK_BARS   = 200
@@ -308,7 +309,7 @@ def fetch_ohlcv(symbol, timeframe, count=100) -> Optional[pd.DataFrame]:
 # ================= MAIN LOGIC =================
 def main(symbols: List[str]):
     for symbol in symbols:
-        logger.info(f"[{symbol}] Analysing...")
+        logger.info(f"[{colored(symbol, 'green')}] Analysing...")
 
         df = fetch_ohlcv(symbol, TIMEFRAME, LOOKBACK_BARS)
         if df is None or len(df) < 120:
@@ -321,7 +322,7 @@ def main(symbols: List[str]):
         fvg = smc.fvg(df, join_consecutive=True)
 
         # ================= LONG SIGNAL =================
-        if signal_row.get('long_entry', False):
+        if  signal_row.get('long_entry', False):
 
             # 1. Direct unmitigated bullish FVG below price → threaded monitor
             bull_fvgs = fvg[
@@ -333,7 +334,7 @@ def main(symbols: List[str]):
                 last_fvg = bull_fvgs.iloc[-1]
                 fvg_zone = [float(last_fvg['Top']), float(last_fvg['Bottom'])]
                 if monitor_fvg(symbol, "BUY", fvg_zone):
-                    logger.info(f"[{symbol}] SMMA long + bullish FVG behind price → monitor started (Method: FVG retracement)")
+                    logger.info(f"[{colored(symbol, 'green')}] SMMA long + bullish FVG behind price → monitor started (Method: FVG retracement)")
                 continue
 
             # 2. FVG-forming pattern in last 12 candles
@@ -346,30 +347,30 @@ def main(symbols: List[str]):
             ])
 
             if has_matching_pattern(FVG_FORMING_PATTERNS['bullish'], 'bullish', patterns_str):
-                logger.info(f"[{symbol}] SMMA long + FVG-forming pattern detected → waiting for new FVG formation")
+                logger.info(f"[{colored(symbol, 'green')}] SMMA long + FVG-forming pattern detected → waiting for new FVG formation")
                 continue   # next 5-min cycle will catch the newly created FVG
 
             # 3. Liquidity grab confluence
             if detect_liquidity_grab(df, 'bullish'):
-                logger.info(f"[{symbol}] SMMA long + liquidity grab confluence → standard entry")
+                logger.info(f"[{colored(symbol, 'green')}] SMMA long + liquidity grab confluence → standard entry")
                 try:
                     d.place_buy_orders(LOT_SIZE, 1, symbol)
-                    logger.info(f"[{symbol}] Trade executed (Method: standard triple SMMA + liquidity grab)")
+                    logger.info(f"[{colored(symbol, 'green')}] Trade executed (Method: standard triple SMMA + liquidity grab)")
                 except Exception as e:
-                    logger.error(f"[{symbol}] Standard buy failed: {e}")
+                    logger.error(f"[{colored(symbol, 'green')}] Standard buy failed: {e}")
                 continue
 
             # 4. Continuation pattern (fallback)
             if has_matching_pattern(CONTINUATION_PATTERNS['bullish'], 'bullish', patterns_str):
-                logger.info(f"[{symbol}] SMMA long + continuation pattern → standard entry")
+                logger.info(f"[{colored(symbol, 'green')}] SMMA long + continuation pattern → standard entry")
                 try:
                     d.place_buy_orders(LOT_SIZE, 1, symbol)
-                    logger.info(f"[{symbol}] Trade executed (Method: standard triple SMMA + continuation pattern)")
+                    logger.info(f"[{colored(symbol, 'green')}] Trade executed (Method: standard triple SMMA + continuation pattern)")
                 except Exception as e:
-                    logger.error(f"[{symbol}] Standard buy failed: {e}")
+                    logger.error(f"[{colored(symbol, 'green')}] Standard buy failed: {e}")
                 continue
 
-            logger.info(f"[{symbol}] SMMA long signal – no FVG / pattern / liquidity grab confluence → skipped")
+            logger.info(f"[{colored(symbol, 'green')}] SMMA long signal – no FVG / pattern / liquidity grab confluence → skipped")
 
         # ================= SHORT SIGNAL (symmetric) =================
         elif signal_row.get('short_entry', False):
@@ -383,7 +384,7 @@ def main(symbols: List[str]):
                 last_fvg = bear_fvgs.iloc[-1]
                 fvg_zone = [float(last_fvg['Top']), float(last_fvg['Bottom'])]
                 if monitor_fvg(symbol, "SELL", fvg_zone):
-                    logger.info(f"[{symbol}] SMMA short + bearish FVG above price → monitor started (Method: FVG retracement)")
+                    logger.info(f"[{colored(symbol, 'red')}] SMMA short + bearish FVG above price → monitor started (Method: FVG retracement)")
                 continue
 
             pattern_df = pr.detect_candlestick_patterns(df.copy())
@@ -395,33 +396,30 @@ def main(symbols: List[str]):
             ])
 
             if has_matching_pattern(FVG_FORMING_PATTERNS['bearish'], 'bearish', patterns_str):
-                logger.info(f"[{symbol}] SMMA short + FVG-forming pattern detected → waiting for new FVG formation")
+                logger.info(f"[{colored(symbol, 'red')}] SMMA short + FVG-forming pattern detected → waiting for new FVG formation")
                 continue
 
             if detect_liquidity_grab(df, 'bearish'):
-                logger.info(f"[{symbol}] SMMA short + liquidity grab confluence → standard entry")
+                logger.info(f"[{colored(symbol, 'red')}] SMMA short + liquidity grab confluence → standard entry")
                 try:
                     d.place_sell_orders(LOT_SIZE, 1, symbol)
-                    logger.info(f"[{symbol}] Trade executed (Method: standard triple SMMA + liquidity grab)")
+                    logger.info(f"[{colored(symbol, 'red')}] Trade executed (Method: standard triple SMMA + liquidity grab)")
                 except Exception as e:
-                    logger.error(f"[{symbol}] Standard sell failed: {e}")
+                    logger.error(f"[{colored(symbol, 'red')}] Standard sell failed: {e}")
                 continue
 
             if has_matching_pattern(CONTINUATION_PATTERNS['bearish'], 'bearish', patterns_str):
-                logger.info(f"[{symbol}] SMMA short + continuation pattern → standard entry")
+                logger.info(f"[{colored(symbol, 'red')}] SMMA short + continuation pattern → standard entry")
                 try:
                     d.place_sell_orders(LOT_SIZE, 1, symbol)
-                    logger.info(f"[{symbol}] Trade executed (Method: standard triple SMMA + continuation pattern)")
+                    logger.info(f"[{colored(symbol, 'red')}] Trade executed (Method: standard triple SMMA + continuation pattern)")
                 except Exception as e:
-                    logger.error(f"[{symbol}] Standard sell failed: {e}")
+                    logger.error(f"[{colored(symbol, 'red')}] Standard sell failed: {e}")
                 continue
 
-            logger.info(f"[{symbol}] SMMA short signal – no FVG / pattern / liquidity grab confluence → skipped")
+            logger.info(f"[{colored(symbol, 'red')}] SMMA short signal – no FVG / pattern / liquidity grab confluence → skipped")
 
         # Optional status
-        active = get_active_monitors()
-        if active:
-            logger.info(f"Active FVG monitors: {len(active)}")
 
 # ================= MAIN LOOP =================
 if __name__ == "__main__":
@@ -436,7 +434,19 @@ if __name__ == "__main__":
             else:
                 logger.info("Maximum open positions reached – no new entries.")
 
-            sleeper(300)   # 5 minutes
+            current_minute = datetime.now().minute
+            if current_minute % 5 == 0:
+                sleep_time = 300
+            else:
+                minutes_to_next = 5 - (current_minute % 5)
+                sleep_time = minutes_to_next * 60
+
+            sleeper(sleep_time-datetime.now().second)
+        active = get_active_monitors()
+        if active:
+            logger.info(f"Currently {len(active)} active FVG monitors")
+            for m in active:
+                logger.info(colored(f"  • {m['id']}  →  {m['status']}", 'yellow'))
 
     except KeyboardInterrupt:
         logger.info("Shutting down SMMA + FVG bot.")
