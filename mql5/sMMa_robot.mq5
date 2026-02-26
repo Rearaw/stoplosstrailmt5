@@ -6,79 +6,41 @@
 #property copyright "rearaw"
 #property link      "https://www.mql5.com"
 #property version   "1.00"
-#property description "Automated trading bot using SMMA strategy with breakouts and retests"
-//+------------------------------------------------------------------+
-//| Custom indicator initialization function                         |
-//+------------------------------------------------------------------+
 #property strict
-#property indicator_chart_window  // Plots on main chart
-#property indicator_buffers 5     // 3 SMMAs + 2 arrows
-#property indicator_plots   5
-
-// Plot properties for SMMAs
-#property indicator_label1  "SMMA High"
-#property indicator_type1   DRAW_LINE
-#property indicator_color1  clrLime
-#property indicator_style1  STYLE_DASHDOTDOT
-#property indicator_width1  1
-
-#property indicator_label2  "SMMA Low"
-#property indicator_type2   DRAW_LINE
-#property indicator_color2  clrRed
-#property indicator_style2  STYLE_DASHDOTDOT
-#property indicator_width2  1
-
-#property indicator_label3  "SMMA Close"
-#property indicator_type3   DRAW_LINE
-#property indicator_color3  clrWhiteSmoke
-#property indicator_style3  STYLE_SOLID
-#property indicator_width3  1
-
-// Plot properties for arrows
-#property indicator_label4  "Buy Signal"
-#property indicator_type4   DRAW_ARROW
-#property indicator_color4  clrLime
-#property indicator_style4  STYLE_SOLID
-#property indicator_width4  1
-
-#property indicator_label5  "Sell Signal"
-#property indicator_type5   DRAW_ARROW
-#property indicator_color5  clrRed
-#property indicator_style5  STYLE_SOLID
-#property indicator_width5  1
+#property description "Automated trading bot using SMMA strategy with breakouts and retests"
 
 //--- Input parameters
-input int    SMMA_Length       = 70;           // SMMA Period
+input int    SMMA_Length       = 100;           // SMMA Period
 input bool   Use_Retests       = true;         // Enable Retests
 input double Retest_Depth      = 0.1;          // Retest Depth (%)
 input double Risk_Percentage   = 2.0;          // Risk % per trade
-input double Take_Profit_Ratio = 2.0;          // TP/SL ratio
+input double Take_Profit_Ratio = 3.0;          // TP/SL ratio
 input int    Max_Positions     = 1;            // Max simultaneous positions
 input bool   Use_SL            = true;         // Use stop loss
 input bool   Use_TP            = true;         // Use take profit
 input int    Magic_Number      = 100001;       // Magic number for identification
 input bool   Print_Logs        = true;         // Print debug info
-input double Manual_Lot_Size   = 0.01;          // Set >0 for manual lot size, 0 for auto
+input double Manual_Lot_Size   = 0.05;          // Set >0 for manual lot size, 0 for auto
 
 input bool   UseTrailingStop    = true;          // Enable trailing stop
-input double TrailingStart      = 30.0;          // Points in profit to start trailing
-input double TrailingStep       = 15.0;          // Trailing distance in points
+input double TrailingStart      = 100.0;          // Points in profit to start trailing
+input double TrailingStep       = 30.0;          // Trailing distance in points
 input double TrailingMinDistance= 10.0;          // Minimum allowed trailing distance
+input int    ATR_Period        = 14;            // ATR Period
+input double ATR_Multiplier    = 2.5;           // ATR Multiplier for trailing distance
 
 //--- Indicator handles
 int hSMMA_High  = INVALID_HANDLE;
 int hSMMA_Low   = INVALID_HANDLE;
 int hSMMA_Close = INVALID_HANDLE;
 int hCCI        = INVALID_HANDLE;
-
+int hATR = INVALID_HANDLE;
 
 //--- Buffers for indicator values
 double Buffer_SMMA_High[];
 double Buffer_SMMA_Low[];
 double Buffer_SMMA_Close[];
 double Buffer_CCI[];
-double Buffer_Buy_Arrow[];
-double Buffer_Sell_Arrow[];
 
 //--- Persistent bias
 double bias = 0;
@@ -88,17 +50,6 @@ double bias = 0;
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   // Assign buffers
-   SetIndexBuffer(0, Buffer_SMMA_High, INDICATOR_DATA);
-   SetIndexBuffer(1, Buffer_SMMA_Low, INDICATOR_DATA);
-   SetIndexBuffer(2, Buffer_SMMA_Close, INDICATOR_DATA);
-   SetIndexBuffer(3, Buffer_Buy_Arrow, INDICATOR_DATA);
-   SetIndexBuffer(4, Buffer_Sell_Arrow, INDICATOR_DATA);
-   
-   // Set arrow codes using MQL5-compatible function
-   PlotIndexSetInteger(3, PLOT_ARROW, 233);  // Buy arrow (e.g., up arrow symbol)
-   PlotIndexSetInteger(4, PLOT_ARROW, 234);  // Sell arrow (e.g., down arrow symbol)
-  
    // Create SMMA handles
    hSMMA_High = iMA(NULL, 0, SMMA_Length, 0, MODE_SMMA, PRICE_HIGH);
    if (hSMMA_High == INVALID_HANDLE) 
@@ -127,14 +78,12 @@ int OnInit()
       Print("Failed to create CCI handle");
       return(INIT_FAILED);
    }
-      // Set empty values for arrows (to hide when no signal)
-
-   PlotIndexSetDouble(3, PLOT_EMPTY_VALUE, EMPTY_VALUE);
-   PlotIndexSetDouble(4, PLOT_EMPTY_VALUE, EMPTY_VALUE);
-   // Set arrays as series for correct indexing
-   
-   ArraySetAsSeries(Buffer_Buy_Arrow, true);
-   ArraySetAsSeries(Buffer_Sell_Arrow, true);
+   hATR = iATR(_Symbol, _Period, ATR_Period);
+if (hATR == INVALID_HANDLE) 
+{ 
+   Print("Failed to create ATR handle");
+   return(INIT_FAILED); 
+}
    ArraySetAsSeries(Buffer_SMMA_High, true);
    ArraySetAsSeries(Buffer_SMMA_Low, true);
    ArraySetAsSeries(Buffer_SMMA_Close, true);
@@ -154,7 +103,7 @@ void OnDeinit(const int reason)
    if (hSMMA_Low != INVALID_HANDLE) IndicatorRelease(hSMMA_Low);
    if (hSMMA_Close != INVALID_HANDLE) IndicatorRelease(hSMMA_Close);
    if (hCCI != INVALID_HANDLE) IndicatorRelease(hCCI);
-
+   if (hATR != INVALID_HANDLE) IndicatorRelease(hATR);
    if(Print_Logs) Print("Bot deinitialized");
 }
 
@@ -409,6 +358,15 @@ void ManagePositions()
 {
    if (!UseTrailingStop) return;
 
+   double atr_buffer[1];
+   if (CopyBuffer(hATR, 0, 1, 1, atr_buffer) != 1)  // Get latest closed bar ATR
+   {
+      if (Print_Logs) Print("Failed to copy ATR buffer");
+      return;
+   }
+   double atr_value = atr_buffer[0];
+   if (atr_value == 0.0) return;  // Invalid ATR
+
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       if(!PositionSelectByTicket(PositionGetTicket(i))) continue;
@@ -428,7 +386,7 @@ void ManagePositions()
 
       // Normalize trailing values to symbol digits
       double trail_start = TrailingStart   * point;
-      double trail_step  = TrailingStep    * point;
+      double trail_step  = NormalizeDouble(atr_value * ATR_Multiplier, _Digits);
       double min_dist    = TrailingMinDistance * point;
 
       double new_sl = 0.0;
@@ -484,8 +442,8 @@ void ManagePositions()
          else
          {
             if(Print_Logs)
-               PrintFormat("Trailing SL updated | Ticket: %I64u | New SL: %.5f",
-                           ticket, new_sl);
+               PrintFormat("Trailing SL updated | Ticket: %I64u | New SL: %.5f (ATR: %.5f)",
+                           ticket, new_sl, atr_value);
          }
       }
    }
