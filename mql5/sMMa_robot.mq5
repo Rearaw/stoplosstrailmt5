@@ -28,6 +28,10 @@ input double TrailingStep       = 30.0;          // Trailing distance in points
 input double TrailingMinDistance= 10.0;          // Minimum allowed trailing distance
 input int    ATR_Period        = 15;            // ATR Period
 input double ATR_Multiplier    = 6;           // ATR Multiplier for trailing distance
+input bool   UseCCI_Confluence   = true;         // Enable CCI-based lot size reduction on overbought/oversold
+input double CCI_Overbought      = 90.0;         // CCI level that starts reducing long lot size
+input double CCI_Oversold        = -90.0;        // CCI level that starts reducing short lot size
+input double CCI_Max_Penalty     = 0.65;         // Maximum reduction factor (0.65 = -35% lot size)
 
 //--- Indicator handles
 int hSMMA_High  = INVALID_HANDLE;
@@ -170,16 +174,23 @@ void OnTick()
 
       // Get CCI value for overbought/oversold filter
       double cci_value = Buffer_CCI[1];
+      // === CCI CONFLUENCE FOR DYNAMIC LOT SIZING (only affects lots) ===
+      double cci_multiplier = 1.0;
+      if (UseCCI_Confluence)
+      {
+         if (long_entry && cci_value >= CCI_Overbought)  cci_multiplier = CCI_Max_Penalty;
+         if (short_entry && cci_value <= CCI_Oversold)   cci_multiplier = CCI_Max_Penalty;
+      }
       
-      if (long_entry && cci_value < 100)  // Avoid long if overbought
+      if (long_entry && cci_value < CCI_Overbought)  // Avoid long if overbought
       {
          if(Print_Logs) Print("Long signal detected on closed bar | Price: ", close_price, " | CCI: ", cci_value);
-         ExecuteLongTrade(close_price, low_price);
+         ExecuteLongTrade(close_price, low_price, cci_multiplier);
       }
-      if (short_entry && cci_value > -100)  // Avoid short if oversold
+      if (short_entry && cci_value > CCI_Oversold)  // Avoid short if oversold
       {
          if(Print_Logs) Print("Short signal detected on closed bar | Price: ", close_price, " | CCI: ", cci_value);
-         ExecuteShortTrade(close_price, high_price);
+         ExecuteShortTrade(close_price, high_price, cci_multiplier);
       }
    }
 
@@ -189,7 +200,7 @@ void OnTick()
 //+------------------------------------------------------------------+
 //| Execute long trade                                               |
 //+------------------------------------------------------------------+
-void ExecuteLongTrade(double signal_price, double entry_low)
+void ExecuteLongTrade(double signal_price, double entry_low, double cci_multiplier = 1.0)
 {
    double entry_price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double stop_loss = 0;
@@ -207,7 +218,7 @@ void ExecuteLongTrade(double signal_price, double entry_low)
    }
    
    // Calculate lot size based on risk
-   double lot_size = CalculateLotSize(entry_price, stop_loss);
+   double lot_size = CalculateLotSize(entry_price, stop_loss, cci_multiplier);
    
    // Open buy order using CTrade
    MqlTradeRequest request;
@@ -239,7 +250,7 @@ void ExecuteLongTrade(double signal_price, double entry_low)
 //+------------------------------------------------------------------+
 //| Execute short trade                                              |
 //+------------------------------------------------------------------+
-void ExecuteShortTrade(double signal_price, double entry_high)
+void ExecuteShortTrade(double signal_price, double entry_high, double cci_multiplier = 1.0)
 {
    double entry_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double stop_loss = 0;
@@ -257,7 +268,7 @@ void ExecuteShortTrade(double signal_price, double entry_high)
    }
    
    // Calculate lot size based on risk
-   double lot_size = CalculateLotSize(entry_price, stop_loss);
+   double lot_size = CalculateLotSize(entry_price, stop_loss, cci_multiplier);
    
    // Open sell order using CTrade
    MqlTradeRequest request;
@@ -289,7 +300,10 @@ void ExecuteShortTrade(double signal_price, double entry_high)
 //+------------------------------------------------------------------+
 //| Calculate lot size based on risk                                 |
 //+------------------------------------------------------------------+
-double CalculateLotSize(double entry_price, double stop_loss)
+//+------------------------------------------------------------------+
+//| Calculate lot size based on risk                                 |
+//+------------------------------------------------------------------+
+double CalculateLotSize(double entry_price, double stop_loss, double cci_multiplier = 1.0)
 {
    double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double max_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
@@ -299,7 +313,6 @@ double CalculateLotSize(double entry_price, double stop_loss)
    if (Manual_Lot_Size > 0.0)
    {
       double lots = Manual_Lot_Size;
-      // Clamp to allowed range and step
       lots = MathFloor(lots / lot_step) * lot_step;
       lots = MathMax(min_lot, MathMin(lots, max_lot));
       return lots;
@@ -319,18 +332,18 @@ double CalculateLotSize(double entry_price, double stop_loss)
    if (tick_size == 0 || tick_value == 0 || contract_size == 0 || price_difference == 0)
       return min_lot;
 
-   // Calculate the value per lot for the stop loss distance
    double value_per_lot = (price_difference / tick_size) * tick_value;
-
    double lots = risk_amount / value_per_lot;
 
-   // Round down to nearest lot step and clamp to allowed range
+   // Apply CCI confluence penalty (only change for dynamic sizing)
+   lots *= cci_multiplier;
+
+   // Round down to nearest lot step and clamp
    lots = MathFloor(lots / lot_step) * lot_step;
    lots = MathMax(min_lot, MathMin(lots, max_lot));
 
    return lots;
 }
-
 //+------------------------------------------------------------------+
 //| Count open positions                                             |
 //+------------------------------------------------------------------+
