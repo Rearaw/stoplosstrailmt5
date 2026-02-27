@@ -26,8 +26,8 @@ input bool   UseTrailingStop    = true;          // Enable trailing stop
 input double TrailingStart      = 100.0;          // Points in profit to start trailing
 input double TrailingStep       = 30.0;          // Trailing distance in points
 input double TrailingMinDistance= 10.0;          // Minimum allowed trailing distance
-input int    ATR_Period        = 14;            // ATR Period
-input double ATR_Multiplier    = 2.5;           // ATR Multiplier for trailing distance
+input int    ATR_Period        = 15;            // ATR Period
+input double ATR_Multiplier    = 6;           // ATR Multiplier for trailing distance
 
 //--- Indicator handles
 int hSMMA_High  = INVALID_HANDLE;
