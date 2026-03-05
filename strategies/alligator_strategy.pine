@@ -1,0 +1,123 @@
+//@version=5
+strategy("Alligator Strong Breakout + Bias + Candle Color [rearaw]", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2, commission_type=strategy.commission.percent, commission_value=0.04)
+
+// ── Custom SMMA (Wilder's) ──
+smma(src, length) =>
+    var float smma_val = na
+    smma_val := na(smma_val[1]) ? ta.sma(src, length) : (smma_val[1] * (length - 1) + src) / length
+    smma_val
+
+// ── Inputs ──
+jawLen   = input.int(13, "Jaw Length")
+teethLen = input.int(8,  "Teeth Length")
+lipsLen  = input.int(5,  "Lips Length")
+
+jawShift   = input.int(8, "Jaw Shift")
+teethShift = input.int(5, "Teeth Shift")
+lipsShift  = input.int(3, "Lips Shift")
+
+// ── Strong Breakout Filters ──
+minConsecBars = input.int(3,   "Minimum consecutive alignment bars", minval=1)
+minSeparation = input.float(0.4, "Minimum Jaw-Lips separation (%)", minval=0.1, step=0.05)
+
+// ── Alligator Calculation ──
+med = (high + low) / 2.0
+jawRaw   = smma(med, jawLen)
+teethRaw = smma(med, teethLen)
+lipsRaw  = smma(med, lipsLen)
+
+jaw   = jawRaw[jawShift]
+teeth = teethRaw[teethShift]
+lips  = lipsRaw[lipsShift]
+
+// ── Alignment on previous closed bar ──
+prevBullish = (lips[1] > teeth[1]) and (teeth[1] > jaw[1])
+prevBearish = (jaw[1] > teeth[1]) and (teeth[1] > lips[1])
+
+// ── Consecutive alignment counter ──
+var int bullCount = 0
+var int bearCount = 0
+bullCount := prevBullish ? bullCount[1] + 1 : 0
+bearCount := prevBearish ? bearCount[1] + 1 : 0
+
+// ── Separation check ──
+separationOK = (math.abs(jaw[1] - lips[1]) / close[1] * 100) >= minSeparation
+
+// ── Envelope ──
+currUpper = math.max(jaw, teeth, lips)
+currLower = math.min(jaw, teeth, lips)
+prevUpper = math.max(jaw[1], teeth[1], lips[1])
+prevLower = math.min(jaw[1], teeth[1], lips[1])
+
+// ── Bias Management (prevents multiple signals in the same trend) ──
+var string currentBias = "neutral"
+var bool hasSignaledThisPhase = false
+
+bullPhase = prevBullish and (bullCount >= minConsecBars) and separationOK
+bearPhase = prevBearish and (bearCount >= minConsecBars) and separationOK
+
+if bullPhase and currentBias != "bullish"
+    currentBias := "bullish"
+    hasSignaledThisPhase := false
+else if bearPhase and currentBias != "bearish"
+    currentBias := "bearish"
+    hasSignaledThisPhase := false
+else if not bullPhase and not bearPhase
+    currentBias := "neutral"
+
+// ── Strong Breakout Signals with Bias Filter ──
+longEntry  = prevBullish and 
+             (close > currUpper) and 
+             (close[1] <= prevUpper) and 
+             (bullCount >= minConsecBars) and 
+             separationOK and 
+             (currentBias == "bullish") and 
+             not hasSignaledThisPhase
+
+shortEntry = prevBearish and 
+             (close < currLower) and 
+             (close[1] >= prevLower) and 
+             (bearCount >= minConsecBars) and 
+             separationOK and 
+             (currentBias == "bearish") and 
+             not hasSignaledThisPhase
+
+// ── Mark that we have signaled in this phase ──
+if longEntry or shortEntry
+    hasSignaledThisPhase := true
+
+// ── Plots ──
+plot(jaw,   "Jaw",   color=color.new(color.blue,   0), linewidth=2)
+plot(teeth, "Teeth", color=color.new(color.red,    0), linewidth=2)
+plot(lips,  "Lips",  color=color.new(color.green,  0), linewidth=2)
+
+plotshape(longEntry,  "Long",  location = location.belowbar, color = color.lime,  style = shape.triangleup,   size=size.normal, text="BUY")
+plotshape(shortEntry, "Short", location = location.abovebar, color = color.red,   style = shape.triangledown, size=size.normal, text="SELL")
+
+// ── Candle Coloring by Trend Bias ──
+barcolor(currentBias == "bullish" ? color.new(color.green,  0) : 
+         currentBias == "bearish" ? color.new(color.red,   0) : na, 
+         title="Trend Candle Color")
+
+// ── Strategy Entries ──
+if longEntry
+    strategy.entry("Alligator Long", strategy.long, comment="Alligator Bullish Breakout")
+
+if shortEntry
+    strategy.entry("Alligator Short", strategy.short, comment="Alligator Bearish Breakout")
+
+// ── Alerts ──
+alertcondition(longEntry,  "Strong Long",  "Alligator Strong Bullish Breakout → BUY")
+alertcondition(shortEntry, "Strong Short", "Alligator Strong Bearish Breakout → SELL")
+
+// ── Info Table ──
+var table info = table.new(position.top_right, 1, 5, bgcolor=color.new(color.black, 80))
+if barstate.islast
+    table.cell(info, 0, 0, "Bias",          text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 1, currentBias,     text_color = currentBias == "bullish" ? color.green : currentBias == "bearish" ? color.red : color.gray, text_size=size.normal)
+    
+    table.cell(info, 0, 2, "Consec Bars",   text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 3, str.tostring(math.max(bullCount, bearCount)), text_color=color.white, text_size=size.normal)
+    
+    table.cell(info, 0, 4, "Signaled?",     text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 5, hasSignaledThisPhase ? "YES" : "NO", text_color = hasSignaledThisPhase ? color.orange : color.green, text_size=size.normal)
