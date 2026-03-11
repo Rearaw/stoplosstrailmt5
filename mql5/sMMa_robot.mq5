@@ -10,7 +10,7 @@
 #property description "Automated trading bot using SMMA strategy with breakouts and retests"
 
 //--- Input parameters
-input int    SMMA_Length       = 100;           // SMMA Period
+input int    SMMA_Length       = 100;          // SMMA Period
 input bool   Use_Retests       = true;         // Enable Retests
 input double Retest_Depth      = 0.1;          // Retest Depth (%)
 input double Risk_Percentage   = 2.0;          // Risk % per trade
@@ -20,7 +20,9 @@ input bool   Use_SL            = true;         // Use stop loss
 input bool   Use_TP            = true;         // Use take profit
 input int    Magic_Number      = 100001;       // Magic number for identification
 input bool   Print_Logs        = true;         // Print debug info
-input double Manual_Lot_Size   = 0.05;          // Set >0 for manual lot size, 0 for auto
+input double Manual_Lot_Size   = 0.05;         // Set >0 for manual lot size, 0 for auto
+input int Zone_Consolidation_Bars = 3;         // Number of prior bars that must have closed inside zone
+
 
 input bool   UseTrailingStop    = true;          // Enable trailing stop
 input double TrailingStart      = 100.0;          // Points in profit to start trailing
@@ -30,14 +32,9 @@ input int    ATR_Period        = 15;            // ATR Period
 input double ATR_Multiplier    = 6;           // ATR Multiplier for trailing distance
 
 input bool   UseCCI_Confluence   = true;         // Enable CCI-based lot size reduction on overbought/oversold
-input double CCI_Overbought      = 90.0;         // Level that starts reducing long lot size
-input double CCI_Oversold        = -90.0;        // Level that starts reducing short lot size
+input double CCI_Overbought      = 100.0;         // Level that starts reducing long lot size
+input double CCI_Oversold        = -100.0;        // Level that starts reducing short lot size
 input double CCI_Max_Penalty     = 0.65;         // Maximum reduction factor (0.65 = -35% lot size)
-
-input bool   UseRegimeFilter    = true;          // Skip all trades in ranging regimes
-input int    ADX_Period         = 14;            // ADX period
-input double ADX_TrendLevel     = 25.0;          // ADX above this = trending (allow trade)
-
 input bool   UseDistanceConfirm = true;          // Enable minimum distance confirmation for signals
 //--- Indicator handles
 int hSMMA_High  = INVALID_HANDLE;
@@ -46,6 +43,7 @@ int hSMMA_Close = INVALID_HANDLE;
 int hCCI        = INVALID_HANDLE;
 int hATR = INVALID_HANDLE;
 int hSMMA_MTF = INVALID_HANDLE;
+int bars_needed = Zone_Consolidation_Bars + 3;
 
 //--- Buffers for indicator values
 double Buffer_SMMA_High[];
@@ -132,10 +130,10 @@ void OnTick()
    last_bar_time = current_bar_time;
 
    // === USE SHIFT 1 = JUST CLOSED BAR ===
-   if (CopyBuffer(hSMMA_High,  0, 0, 5, Buffer_SMMA_High)  < 5) return;
-   if (CopyBuffer(hSMMA_Low,   0, 0, 5, Buffer_SMMA_Low)   < 5) return;
-   if (CopyBuffer(hSMMA_Close, 0, 0, 5, Buffer_SMMA_Close) < 5) return;
-   if (CopyBuffer(hCCI,        0, 0, 5, Buffer_CCI)        < 5) return;
+   if (CopyBuffer(hSMMA_High,  0, 0, bars_needed, Buffer_SMMA_High)  < bars_needed) return;
+   if (CopyBuffer(hSMMA_Low,   0, 0, bars_needed, Buffer_SMMA_Low)   < bars_needed) return;
+   if (CopyBuffer(hSMMA_Close, 0, 0, bars_needed, Buffer_SMMA_Close) < bars_needed) return;
+   if (CopyBuffer(hCCI,        0, 0, bars_needed, Buffer_CCI)        < bars_needed) return;
 
    // Closed bar (signal bar)
    double close_price   = iClose(_Symbol, _Period, 1);
@@ -177,8 +175,10 @@ void OnTick()
 
  
             // Candle direction filter (closed candle)
-      bool long_entry  = (long_breakout || long_retest)  && (close_price > open_price);
-      bool short_entry = (short_breakout || short_retest) && (close_price < open_price);
+      bool zone_confirmed = CandlesClosedInsideZone(Zone_Consolidation_Bars);
+
+      bool long_entry  = (long_breakout || long_retest)  && (close_price > open_price) && zone_confirmed;
+      bool short_entry = (short_breakout || short_retest) && (close_price < open_price) && zone_confirmed;
 
       // Get CCI value for overbought/oversold filter
       double cci_value = Buffer_CCI[1];
@@ -220,6 +220,20 @@ void OnTick()
    }
 
    ManagePositions();
+}
+// === HELPER FUNCTION ===
+bool CandlesClosedInsideZone(int required_bars)
+{
+   for (int i = 2; i <= required_bars + 1; i++)  // Start at shift 2 (bar before signal bar)
+   {
+      double c = iClose(_Symbol, _Period, i);
+      double sh = Buffer_SMMA_High[i];
+      double sl = Buffer_SMMA_Low[i];
+
+      if (c > sh || c < sl)  // Closed outside the zone
+         return false;
+   }
+   return true;
 }
 //+------------------------------------------------------------------+
 //| Execute long trade                                               |
