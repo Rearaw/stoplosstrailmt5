@@ -31,11 +31,13 @@ input double TrailingMinDistance= 10.0;          // Minimum allowed trailing dis
 input int    ATR_Period        = 15;            // ATR Period
 input double ATR_Multiplier    = 6;           // ATR Multiplier for trailing distance
 
-input bool   UseCCI_Confluence   = true;         // Enable CCI-based lot size reduction on overbought/oversold
-input double CCI_Overbought      = 100.0;         // Level that starts reducing long lot size
-input double CCI_Oversold        = -100.0;        // Level that starts reducing short lot size
-input double CCI_Max_Penalty     = 0.65;         // Maximum reduction factor (0.65 = -35% lot size)
-input bool   UseDistanceConfirm = true;          // Enable minimum distance confirmation for signals
+input double CCI_Overbought        = 100.0;       // CCI level to block long entries (overbought)
+input double CCI_Oversold          = -100.0;      // CCI level to block short entries (oversold)
+input bool   UseCCI_Momentum       = true;        // Enable CCI momentum lot size boost
+input double CCI_Momentum_Min      = 90.0;        // CCI lower bound for momentum zone (long: 90-100, short: -100--90)
+input double CCI_Momentum_Max      = 100.0;       // CCI upper bound for momentum zone
+input double CCI_Momentum_Multiplier = 1.5;       // Lot size multiplier when CCI is in momentum zone
+input bool   UseDistanceConfirm    = true;        // Enable minimum distance confirmation for signals
 //--- Indicator handles
 int hSMMA_High  = INVALID_HANDLE;
 int hSMMA_Low   = INVALID_HANDLE;
@@ -209,13 +211,15 @@ void OnTick()
       
       if (long_entry && cci_value < CCI_Overbought)  // Avoid long if overbought
       {
-         if(Print_Logs) Print("Long signal detected on closed bar | Price: ", close_price, " | CCI: ", cci_value);
-         ExecuteLongTrade(low_price);
+         if(Print_Logs) PrintFormat("Long signal | Price: %.5f | CCI: %.2f | Breakout: %s",
+                                     close_price, cci_value, long_breakout ? "YES" : "NO");
+         ExecuteLongTrade(cci_value);
       }
       if (short_entry && cci_value > CCI_Oversold)  // Avoid short if oversold
       {
-         if(Print_Logs) Print("Short signal detected on closed bar | Price: ", close_price, " | CCI: ", cci_value);
-         ExecuteShortTrade(high_price);
+         if(Print_Logs) PrintFormat("Short signal | Price: %.5f | CCI: %.2f | Breakout: %s",
+                                     close_price, cci_value, short_breakout ? "YES" : "NO");
+         ExecuteShortTrade(cci_value);
       }
    }
 
@@ -238,128 +242,168 @@ bool CandlesClosedInsideZone(int required_bars)
 //+------------------------------------------------------------------+
 //| Execute long trade                                               |
 //+------------------------------------------------------------------+
-void ExecuteLongTrade(double signal_low)
+void ExecuteLongTrade(double cci_value)
 {
    double entry_price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double stop_loss = 0;
+   double stop_loss   = 0;
    double take_profit = 0;
-   
+
+   // === TASK 2: SL placed so that the distance = Risk_Percentage of account balance ===
    if (Use_SL)
    {
-      stop_loss = signal_low;
-   }
-   
-   if (Use_TP)
-   {
-      double risk = entry_price - stop_loss;
-      take_profit = entry_price + (risk * Take_Profit_Ratio);
-   }
-   
-   // Calculate lot size based on risk
-   double lot_size = CalculateLotSize(entry_price);
-   
-   if (lot_size <= 0.0) return;  // Skip if zero due to filters
-   
-   // Open buy order using CTrade
-   MqlTradeRequest request;
-   MqlTradeResult result;
-   ZeroMemory(request);
-   ZeroMemory(result);
+      double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+      double risk_amount     = account_balance * (Risk_Percentage / 100.0);  // e.g. 1000 * 10% = 100
 
-   request.action   = TRADE_ACTION_DEAL;
-   request.symbol   = _Symbol;
-   request.volume   = lot_size;
-   request.type     = ORDER_TYPE_BUY;
-   request.price    = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   request.sl       = stop_loss;
-   request.tp       = take_profit;
-   request.deviation= 10;
-   request.magic    = Magic_Number;
-   request.comment  = "SMMA Long Trade";
+      double tick_size  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double lot_size   = CalculateLotSize(cci_value);
 
-   if (OrderSend(request, result))
-   {
-      if(Print_Logs) Print("Buy order opened: ", result.order, " Lot: ", lot_size);
-      last_trade_direction = 1;  // Update to long
-   }
-   else
-   {
-      if(Print_Logs) Print("Buy order failed: ", result.retcode, " ", result.comment);
+      // SL distance in price = risk_amount / (lot_size * tick_value / tick_size)
+      double value_per_lot_per_tick = tick_value / tick_size;
+      double sl_distance = (lot_size > 0 && value_per_lot_per_tick > 0)
+                           ? risk_amount / (lot_size * value_per_lot_per_tick)
+                           : 0;
+
+      stop_loss = NormalizeDouble(entry_price - sl_distance, _Digits);
+
+      if (Use_TP)
+         take_profit = NormalizeDouble(entry_price + sl_distance * Take_Profit_Ratio, _Digits);
+
+      double final_lot = lot_size;
+      if (final_lot <= 0.0) return;
+
+      if (Print_Logs)
+         PrintFormat("Long | Entry: %.5f | SL: %.5f | TP: %.5f | SL dist: %.5f | Risk: %.2f | Lots: %.2f",
+                     entry_price, stop_loss, take_profit, sl_distance, risk_amount, final_lot);
+
+      MqlTradeRequest request;
+      MqlTradeResult  result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+
+      request.action    = TRADE_ACTION_DEAL;
+      request.symbol    = _Symbol;
+      request.volume    = final_lot;
+      request.type      = ORDER_TYPE_BUY;
+      request.price     = entry_price;
+      request.sl        = stop_loss;
+      request.tp        = take_profit;
+      request.deviation = 10;
+      request.magic     = Magic_Number;
+      request.comment   = "SMMA Long Trade";
+
+      if (OrderSend(request, result))
+      {
+         if(Print_Logs) Print("Buy order opened: ", result.order, " Lot: ", final_lot);
+         last_trade_direction = 1;
+      }
+      else
+         if(Print_Logs) Print("Buy order failed: ", result.retcode, " ", result.comment);
    }
 }
 
 //+------------------------------------------------------------------+
 //| Execute short trade                                              |
 //+------------------------------------------------------------------+
-void ExecuteShortTrade(double signal_high)
+void ExecuteShortTrade(double cci_value)
 {
    double entry_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double stop_loss = 0;
+   double stop_loss   = 0;
    double take_profit = 0;
-   
+
+   // === TASK 2: SL placed so that the distance = Risk_Percentage of account balance ===
    if (Use_SL)
    {
-      stop_loss = signal_high;
-   }
-   
-   if (Use_TP)
-   {
-      double risk = stop_loss - entry_price;
-      take_profit = entry_price - (risk * Take_Profit_Ratio);
-   }
-   
-   // Calculate lot size based on risk
-   double lot_size = CalculateLotSize(entry_price);
-   
-   if (lot_size <= 0.0) return;  // Skip if zero due to filters
-   
-   // Open sell order using CTrade
-   MqlTradeRequest request;
-   MqlTradeResult result;
-   ZeroMemory(request);
-   ZeroMemory(result);
+      double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+      double risk_amount     = account_balance * (Risk_Percentage / 100.0);
 
-   request.action   = TRADE_ACTION_DEAL;
-   request.symbol   = _Symbol;
-   request.volume   = lot_size;
-   request.type     = ORDER_TYPE_SELL;
-   request.price    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   request.sl       = stop_loss;
-   request.tp       = take_profit;
-   request.deviation= 10;
-   request.magic    = Magic_Number;
-   request.comment  = "SMMA Short Trade";
+      double tick_size  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double lot_size   = CalculateLotSize(cci_value);
 
-   if (OrderSend(request, result))
-   {
-      if(Print_Logs) Print("Sell order opened: ", result.order, " Lot: ", lot_size);
-      last_trade_direction = -1;  // Update to short
-   }
-   else
-   {
-      if(Print_Logs) Print("Sell order failed: ", result.retcode, " ", result.comment);
+      double value_per_lot_per_tick = tick_value / tick_size;
+      double sl_distance = (lot_size > 0 && value_per_lot_per_tick > 0)
+                           ? risk_amount / (lot_size * value_per_lot_per_tick)
+                           : 0;
+
+      stop_loss = NormalizeDouble(entry_price + sl_distance, _Digits);
+
+      if (Use_TP)
+         take_profit = NormalizeDouble(entry_price - sl_distance * Take_Profit_Ratio, _Digits);
+
+      double final_lot = lot_size;
+      if (final_lot <= 0.0) return;
+
+      if (Print_Logs)
+         PrintFormat("Short | Entry: %.5f | SL: %.5f | TP: %.5f | SL dist: %.5f | Risk: %.2f | Lots: %.2f",
+                     entry_price, stop_loss, take_profit, sl_distance, risk_amount, final_lot);
+
+      MqlTradeRequest request;
+      MqlTradeResult  result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+
+      request.action    = TRADE_ACTION_DEAL;
+      request.symbol    = _Symbol;
+      request.volume    = final_lot;
+      request.type      = ORDER_TYPE_SELL;
+      request.price     = entry_price;
+      request.sl        = stop_loss;
+      request.tp        = take_profit;
+      request.deviation = 10;
+      request.magic     = Magic_Number;
+      request.comment   = "SMMA Short Trade";
+
+      if (OrderSend(request, result))
+      {
+         if(Print_Logs) Print("Sell order opened: ", result.order, " Lot: ", final_lot);
+         last_trade_direction = -1;
+      }
+      else
+         if(Print_Logs) Print("Sell order failed: ", result.retcode, " ", result.comment);
    }
 }
 
 //+------------------------------------------------------------------+
-//| Calculate lot size based on risk                                 |
+//| Calculate lot size with optional CCI momentum boost             |
+//| cci_value: current CCI reading on signal bar                    |
+//|                                                                  |
+//| TASK 1: If CCI is in momentum zone (e.g. 90–100 for long,       |
+//|         -100–-90 for short) multiply lot by CCI_Momentum_Multiplier |
 //+------------------------------------------------------------------+
-double CalculateLotSize(double entry_price)
+double CalculateLotSize(double cci_value)
 {
-   double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   double max_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double min_lot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double max_lot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double lot_step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
 
-   // Use manual lot size if set (>0)
-   if (Manual_Lot_Size > 0.0)
+   // Base lot: manual if set, else minimum
+   double base_lot = (Manual_Lot_Size > 0.0) ? Manual_Lot_Size : min_lot;
+
+   // === TASK 1: CCI momentum zone check ===
+   // Long momentum:  CCI between +CCI_Momentum_Min and +CCI_Momentum_Max
+   // Short momentum: CCI between -CCI_Momentum_Max and -CCI_Momentum_Min
+   bool in_momentum_zone = false;
+   if (UseCCI_Momentum)
    {
-      double lots = Manual_Lot_Size;
-      // Clamp to allowed range and step
-      lots = MathFloor(lots / lot_step) * lot_step;
-      lots = MathMax(min_lot, MathMin(lots, max_lot));
-      return lots;
+      bool long_momentum  = (cci_value >= CCI_Momentum_Min  && cci_value <= CCI_Momentum_Max);
+      bool short_momentum = (cci_value <= -CCI_Momentum_Min && cci_value >= -CCI_Momentum_Max);
+      in_momentum_zone    = (long_momentum || short_momentum);
    }
-   return min_lot;  // Default to minimum lot if no risk-based lot size is calculated
+
+   double lots = base_lot;
+   if (in_momentum_zone)
+      lots = base_lot * CCI_Momentum_Multiplier;
+
+   // Normalize to lot step and clamp
+   lots = MathFloor(lots / lot_step) * lot_step;
+   lots = MathMax(min_lot, MathMin(lots, max_lot));
+
+   if (Print_Logs)
+      PrintFormat("LotSize | Base: %.2f | CCI: %.2f | Momentum: %s | Final: %.2f",
+                  base_lot, cci_value, in_momentum_zone ? "YES" : "NO", lots);
+
+   return lots;
 }
 
 //+------------------------------------------------------------------+
