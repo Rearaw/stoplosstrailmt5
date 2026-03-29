@@ -1,0 +1,138 @@
+//@version=5
+indicator("Alligator Entry Signals", shorttitle="Alligator", overlay=true, max_labels_count=500, max_bars_back=500)
+
+// ──────────────────────────────────────────────────────────────
+// INPUT PARAMETERS (exact match to specification)
+// ──────────────────────────────────────────────────────────────
+useMA          = input.bool(true,  "Use MA Confluence",                          group="Confluence Toggles")
+useCCI         = input.bool(true,  "Use CCI Confluence",                         group="Confluence Toggles")
+useConverging  = input.bool(false, "Use Converging Alligator Filter",            group="Confluence Toggles")
+
+maLength       = input.int(200,    "MA Length",          minval=10,              group="MA Parameters")
+maType         = input.string("SMA", "MA Type",          options=["SMA","EMA"],  group="MA Parameters")
+
+cciLength      = input.int(14,     "CCI Length",         minval=1,               group="CCI Parameters")
+cciOverbought  = input.float(100.0,"CCI Overbought Level (Long requires <)",    group="CCI Parameters")
+cciOversold    = input.float(-100.0,"CCI Oversold Level (Short requires >)",     group="CCI Parameters")
+
+showLongs      = input.bool(true,  "Show Long Signals",                          group="Visual Settings")
+showShorts     = input.bool(true,  "Show Short Signals",                         group="Visual Settings")
+
+// ──────────────────────────────────────────────────────────────
+// ALLIGATOR (manual implementation — equivalent to requested ta.alligator logic)
+// Jaw: SMMA(13) on HL2, Teeth: SMMA(8) on HL2, Lips: SMMA(5) on HL2
+// Values retrieved from previous completed bar ([1]) to prevent repainting
+// ──────────────────────────────────────────────────────────────
+hl2Price = hl2
+jaw      = ta.sma(hl2Price, 13)
+teeth    = ta.sma(hl2Price, 8)
+lips     = ta.sma(hl2Price, 5)
+
+// Plot Alligator lines with standard forward offsets for visual fidelity
+plot(jaw,   title="Jaw",   color=color.blue, linewidth=2, offset=8)
+plot(teeth, title="Teeth", color=color.red,  linewidth=2, offset=5)
+plot(lips,  title="Lips",  color=color.lime, linewidth=2, offset=3)
+
+// ──────────────────────────────────────────────────────────────
+// ADDITIONAL INDICATORS
+// ──────────────────────────────────────────────────────────────
+ma  = maType == "SMA" ? ta.sma(close, maLength) : ta.ema(close, maLength)
+cci = ta.cci(hlc3, cciLength)
+
+// ──────────────────────────────────────────────────────────────
+// STATE TRACKING (persistent across bars)
+// ──────────────────────────────────────────────────────────────
+var bool bullCrossArmed     = false
+var bool bearCrossArmed     = false
+var bool bullStacking       = false
+var bool bearStacking       = false
+var bool bullSignalTaken    = false
+var bool bearSignalTaken    = false
+
+// ──────────────────────────────────────────────────────────────
+// CROSSOVER DETECTION (on previous closed bar)
+// Lips crosses above BOTH Teeth and Jaw → arms bullish cycle
+// Symmetric for bearish
+// ──────────────────────────────────────────────────────────────
+bullCrossPrev = (lips[2] <= math.max(teeth[2], jaw[2])) and (lips[1] > math.max(teeth[1], jaw[1]))
+bearCrossPrev = (lips[2] >= math.min(teeth[2], jaw[2])) and (lips[1] < math.min(teeth[1], jaw[1]))
+
+// Reset state on new crossover (opposite type also resets)
+if bullCrossPrev
+    bullCrossArmed  := true
+    bearCrossArmed  := false
+    bullStacking    := false
+    bullSignalTaken := false
+
+if bearCrossPrev
+    bearCrossArmed  := true
+    bullCrossArmed  := false
+    bearStacking    := false
+    bearSignalTaken := false
+
+// ──────────────────────────────────────────────────────────────
+// STACKING COMPLETION (after crossover, on previous closed bar)
+// Bullish: Lips > Teeth > Jaw
+// Bearish: Lips < Teeth < Jaw
+// ──────────────────────────────────────────────────────────────
+if bullCrossArmed and not bullStacking and (lips[1] > teeth[1]) and (teeth[1] > jaw[1])
+    bullStacking := true
+
+if bearCrossArmed and not bearStacking and (lips[1] < teeth[1]) and (teeth[1] < jaw[1])
+    bearStacking := true
+
+// ──────────────────────────────────────────────────────────────
+// FULL CONDITIONS MET ON PREVIOUS CLOSED BAR
+// ──────────────────────────────────────────────────────────────
+bullPriceOk   = close[1] > jaw[1] and close[1] > teeth[1] and close[1] > lips[1]
+bearPriceOk   = close[1] < jaw[1] and close[1] < teeth[1] and close[1] < lips[1]
+
+maBullOk      = not useMA or close[1] > ma[1]
+maBearOk      = not useMA or close[1] < ma[1]
+
+cciBullOk     = not useCCI or cci[1] < cciOverbought
+cciBearOk     = not useCCI or cci[1] > cciOversold
+
+// Converging distances (lines moving toward each other)
+ltDist1 = math.abs(lips[1] - teeth[1])
+tjDist1 = math.abs(teeth[1] - jaw[1])
+ltDist2 = math.abs(lips[2] - teeth[2])
+tjDist2 = math.abs(teeth[2] - jaw[2])
+convergingOk = not useConverging or (ltDist1 < ltDist2 and tjDist1 < tjDist2)
+
+bullSetupReady = bullCrossArmed and bullStacking
+bearSetupReady = bearCrossArmed and bearStacking
+
+bullConditionsMet = bullSetupReady and bullPriceOk and maBullOk and cciBullOk and convergingOk
+bearConditionsMet = bearSetupReady and bearPriceOk and maBearOk and cciBearOk and convergingOk
+
+// ──────────────────────────────────────────────────────────────
+// ENTRY TRIGGER (first confirmed bar after conditions are met)
+// Bullish candle + close above Lips
+// Bearish candle + close below Lips
+// Signal plotted only once per crossover cycle
+// ──────────────────────────────────────────────────────────────
+longSignal  = bullConditionsMet and not bullSignalTaken and (close > lips) and (close > open)
+shortSignal = bearConditionsMet and not bearSignalTaken and (close < lips) and (close < open)
+
+// Mark signal as taken (prevents duplicate signals until next crossover)
+if longSignal
+    bullSignalTaken := true
+if shortSignal
+    bearSignalTaken := true
+
+// ──────────────────────────────────────────────────────────────
+// PLOTTING
+// ──────────────────────────────────────────────────────────────
+plot(ma, title="MA Filter", color=color.new(color.purple, 0), linewidth=1)
+
+plotshape(showLongs and longSignal,  title="Long Signal",  location=location.belowbar, color=color.new(color.green, 0), style=shape.labelup,   text="LONG",  textcolor=color.white, size=size.normal)
+plotshape(showShorts and shortSignal, title="Short Signal", location=location.abovebar, color=color.new(color.red,   0), style=shape.labeldown, text="SHORT", textcolor=color.white, size=size.normal)
+
+// Optional background tint for armed state (debug/visual aid)
+bgcolor(bullCrossArmed ? color.new(color.green, 95) : na, title="Bull Armed")
+bgcolor(bearCrossArmed ? color.new(color.red,   95) : na, title="Bear Armed")
+
+// Alerts (non-executing)
+alertcondition(longSignal,  title="Alligator Long Signal",  message="Alligator Long Entry Signal")
+alertcondition(shortSignal, title="Alligator Short Signal", message="Alligator Short Entry Signal")
