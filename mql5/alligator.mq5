@@ -202,14 +202,6 @@ void OnTick()
    double openBar1  = iOpen(_Symbol,  PERIOD_CURRENT, 1);
    double highBar1  = iHigh(_Symbol,  PERIOD_CURRENT, 1);
    double lowBar1   = iLow(_Symbol,   PERIOD_CURRENT, 1);
-
-   if(PrintLogs)
-     {
-      PrintFormat("Bar[1] O=%.5f H=%.5f L=%.5f C=%.5f | Jaw=%.5f Teeth=%.5f Lips=%.5f | CCI=%.2f MA=%.5f ATR=%.5f",
-                  openBar1, highBar1, lowBar1, closeBar1,
-                  jaw1, teeth1, lips1, cci1, ma1, atr1);
-     }
-
    //=== STEP 1 – DETECT CROSSOVER EVENTS ===================================
 
    DetectCrossovers(lips1, teeth1, jaw1, lips2, teeth2, jaw2);
